@@ -9,7 +9,6 @@ import {
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, TrendingUp, Users, ChevronUp, ChevronDown } from "lucide-react";
-import { getFinnhubKey } from "@/services/finnhubService";
 
 /* ── Types ──────────────────────────────────────────────── */
 interface YearEstimate {
@@ -25,79 +24,133 @@ interface YearEstimate {
   analysts: number;
 }
 
-/* ── Finnhub fetch ──────────────────────────────────────── */
+/* ── Cache ──────────────────────────────────────────────── */
 const CACHE_TTL = 24 * 60 * 60 * 1000;
 const cacheGet = (k: string) => {
   try {
-    const r = localStorage.getItem("fh_cache_" + k);
+    const r = localStorage.getItem("gf_cache_" + k);
     if (!r) return null;
     const { ts, data } = JSON.parse(r);
-    if (Date.now() - ts > CACHE_TTL) { localStorage.removeItem("fh_cache_" + k); return null; }
+    if (Date.now() - ts > CACHE_TTL) { localStorage.removeItem("gf_cache_" + k); return null; }
     return data;
   } catch { return null; }
 };
 const cacheSet = (k: string, data: unknown) => {
-  try { localStorage.setItem("fh_cache_" + k, JSON.stringify({ ts: Date.now(), data })); } catch { /**/ }
+  try { localStorage.setItem("gf_cache_" + k, JSON.stringify({ ts: Date.now(), data })); } catch { /**/ }
+};
+
+const n = (v: any): number | null => {
+  const raw = v?.raw ?? v;
+  const x = typeof raw === "number" ? raw : parseFloat(String(raw));
+  return Number.isFinite(x) ? x : null;
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const fhGet = async (path: string, params: Record<string, string> = {}): Promise<any> => {
-  const key = getFinnhubKey();
-  const ck = path + JSON.stringify(params);
+const yFetch = async (url: string): Promise<any> => {
+  const ck = url;
   const cached = cacheGet(ck);
   if (cached) return cached;
-  const url = new URL(`https://finnhub.io/api/v1${path}`);
-  url.searchParams.set("token", key);
-  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const res = await fetch(url.toString());
-  if (!res.ok) throw new Error(`Finnhub ${res.status}`);
-  const json = await res.json();
-  cacheSet(ck, json);
-  return json;
-};
-
-const n = (v: unknown): number | null => {
-  const x = typeof v === "number" ? v : parseFloat(String(v));
-  return Number.isFinite(x) ? x : null;
+  const tryFetch = async (target: string) => {
+    const res = await fetch(target, { headers: { Accept: "application/json" } });
+    if (!res.ok) throw new Error(`${res.status}`);
+    return res.json();
+  };
+  try {
+    const data = await tryFetch(url);
+    cacheSet(ck, data);
+    return data;
+  } catch {
+    const data = await tryFetch(`https://corsproxy.io/?url=${encodeURIComponent(url)}`);
+    cacheSet(ck, data);
+    return data;
+  }
 };
 
 async function fetchForecasts(ticker: string): Promise<YearEstimate[]> {
   const t = ticker.trim().toUpperCase();
-  const [revRaw, epsRaw] = await Promise.all([
-    fhGet("/stock/revenue-estimate", { symbol: t, freq: "annual" }),
-    fhGet("/stock/eps-estimate",     { symbol: t, freq: "annual" }),
-  ]);
+  const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=earningsTrend,financialData,defaultKeyStatistics`;
+  const json = await yFetch(url);
+  const result = json?.quoteSummary?.result?.[0];
+  if (!result) throw new Error("לא נמצאו תחזיות עבור " + t);
+
+  const trends: any[] = result.earningsTrend?.trend ?? [];
+  const finData = result.financialData ?? {};
+  const stats   = result.defaultKeyStatistics ?? {};
 
   const now = new Date().getFullYear();
-  const revMap = new Map<number, any>();
-  const epsMap = new Map<number, any>();
 
-  for (const r of revRaw?.data ?? []) {
-    const yr = n(r.year) ?? new Date(r.period).getFullYear();
-    if (yr >= now - 1 && yr <= now + 5) revMap.set(yr, r);
-  }
-  for (const r of epsRaw?.data ?? []) {
-    const yr = n(r.year) ?? new Date(r.period).getFullYear();
-    if (yr >= now - 1 && yr <= now + 5) epsMap.set(yr, r);
+  // Extract annual trends (period "0y" = current year, "+1y" = next year)
+  const annualTrends = trends.filter((t: any) => /^[+\-]?\d+y$/.test(t.period ?? ""));
+
+  // Build year map from annual trends
+  const yearMap = new Map<number, any>();
+  for (const t of annualTrends) {
+    const period = t.period as string;
+    const offset = parseInt(period.replace("y", ""), 10);
+    const yr = now + offset;
+    yearMap.set(yr, t);
   }
 
-  const years = Array.from(new Set([...revMap.keys(), ...epsMap.keys()])).sort();
-  const estimates: YearEstimate[] = years.map((yr) => {
-    const rev = revMap.get(yr);
-    const eps = epsMap.get(yr);
-    return {
+  // Get 5-year EPS growth rate for extrapolation ("+5y" period if available)
+  const fiveYearTrend = trends.find((t: any) => t.period === "+5y");
+  const epsGrowth5Y = n(fiveYearTrend?.earningsEstimate?.growth) ?? n(stats.fiveYearAvgDividendYield) ?? 0.12;
+
+  // Get current TTM EPS and revenue as base
+  const ttmEPS = n(stats.trailingEps);
+  const ttmRevB = n(finData.totalRevenue) !== null ? n(finData.totalRevenue)! / 1e9 : null;
+  const revGrowth = n(finData.revenueGrowth) ?? 0.10;
+
+  // Build estimates for next 5 years
+  const estimates: YearEstimate[] = [];
+
+  for (let i = 1; i <= 5; i++) {
+    const yr = now + i;
+    const trend = yearMap.get(yr);
+
+    const revenueAvg  = trend ? (n(trend.revenueEstimate?.avg)  !== null ? n(trend.revenueEstimate.avg)!  / 1e9 : null)
+                               : (ttmRevB !== null ? ttmRevB * Math.pow(1 + revGrowth, i) : null);
+    const revenueHigh = trend ? (n(trend.revenueEstimate?.high) !== null ? n(trend.revenueEstimate.high)! / 1e9 : null) : null;
+    const revenueLow  = trend ? (n(trend.revenueEstimate?.low)  !== null ? n(trend.revenueEstimate.low)!  / 1e9 : null) : null;
+
+    const epsAvg  = trend ? n(trend.earningsEstimate?.avg)
+                           : (ttmEPS !== null ? ttmEPS * Math.pow(1 + epsGrowth5Y, i) : null);
+    const epsHigh = trend ? n(trend.earningsEstimate?.high) : null;
+    const epsLow  = trend ? n(trend.earningsEstimate?.low)  : null;
+
+    const analysts = trend ? (n(trend.earningsEstimate?.numberOfAnalysts) ?? 0) : 0;
+    const isExtrapolated = !trend;
+
+    estimates.push({
       year: yr,
-      revenueAvg:  rev ? n(rev.revenueAvg)  !== null ? (n(rev.revenueAvg)!  / 1e9) : null : null,
-      revenueHigh: rev ? n(rev.revenueHigh) !== null ? (n(rev.revenueHigh)! / 1e9) : null : null,
-      revenueLow:  rev ? n(rev.revenueLow)  !== null ? (n(rev.revenueLow)!  / 1e9) : null : null,
+      revenueAvg:  revenueAvg !== null ? +revenueAvg.toFixed(2) : null,
+      revenueHigh: revenueHigh !== null ? +revenueHigh.toFixed(2) : null,
+      revenueLow:  revenueLow  !== null ? +revenueLow.toFixed(2)  : null,
       revenueGrowth: null,
-      epsAvg:  eps ? n(eps.epsAvg)  : null,
-      epsHigh: eps ? n(eps.epsHigh) : null,
-      epsLow:  eps ? n(eps.epsLow)  : null,
+      epsAvg:  epsAvg  !== null ? +epsAvg.toFixed(2)  : null,
+      epsHigh: epsHigh !== null ? +epsHigh.toFixed(2) : null,
+      epsLow:  epsLow  !== null ? +epsLow.toFixed(2)  : null,
       epsGrowth: null,
-      analysts: Math.max(n(rev?.numberAnalysts) ?? 0, n(eps?.numberAnalysts) ?? 0),
-    };
-  });
+      analysts,
+      // @ts-ignore
+      extrapolated: isExtrapolated,
+    });
+  }
+
+  // Add current year as base if we have TTM data
+  if (ttmRevB || ttmEPS) {
+    estimates.unshift({
+      year: now,
+      revenueAvg: ttmRevB ? +ttmRevB.toFixed(2) : null,
+      revenueHigh: null, revenueLow: null,
+      revenueGrowth: null,
+      epsAvg: ttmEPS ? +ttmEPS.toFixed(2) : null,
+      epsHigh: null, epsLow: null,
+      epsGrowth: null,
+      analysts: 0,
+      // @ts-ignore
+      extrapolated: false,
+    });
+  }
 
   // Compute YoY growth
   for (let i = 1; i < estimates.length; i++) {
@@ -300,7 +353,7 @@ export function GrowthForecast({ ticker }: { ticker: string }) {
               </div>
 
               <p className="text-[10px] text-muted-foreground">
-                * תחזיות מבוססות על קונצנזוס אנליסטים מ-Finnhub. אינן מהוות המלצת השקעה.
+                * שנים 1-2: קונצנזוס אנליסטים מ-Yahoo Finance. שנים 3-5: תחזית לפי שיעור צמיחה. אינן מהוות המלצת השקעה.
               </p>
             </>
           )}
