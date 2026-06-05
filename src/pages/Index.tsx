@@ -33,7 +33,7 @@ import { StockAnalysis, setGeminiKey, getGeminiKey } from "@/components/StockAna
 // Initialize API keys on first load
 if (!getApiKey())     setApiKey("LPL9LH322EVZ8F3W");
 if (!getFinnhubKey()) setFinnhubKey("d8gnm4pr01qhjpmoshagd8gnm4pr01qhjpmoshb0");
-if (!getGeminiKey())  setGeminiKey("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");
+setGeminiKey("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");
 
 const TARGET_SHEET = "הערכת שווי מסכמת";
 
