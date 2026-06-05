@@ -1,6 +1,6 @@
 /**
  * GrowthForecast — Analyst consensus revenue + EPS estimates for next 5 years.
- * Data source: Finnhub /stock/revenue-estimate + /stock/eps-estimate (free tier).
+ * Data source: Yahoo Finance earningsTrend (free, no key required).
  */
 import { useState, useEffect } from "react";
 import {
@@ -221,7 +221,7 @@ export function GrowthForecast({ ticker }: { ticker: string }) {
           <CardTitle className="flex items-center gap-2 text-base">
             <TrendingUp className="h-4 w-4 text-primary" />
             תחזית צמיחה — {ticker}
-            <span className="text-xs font-normal text-muted-foreground">קונצנזוס אנליסטים · Finnhub</span>
+            <span className="text-xs font-normal text-muted-foreground">קונצנזוס אנליסטים · Yahoo Finance</span>
           </CardTitle>
           <button onClick={() => setCollapsed((v) => !v)} className="text-muted-foreground hover:text-foreground transition-colors">
             {collapsed ? <ChevronDown className="h-4 w-4" /> : <ChevronUp className="h-4 w-4" />}
