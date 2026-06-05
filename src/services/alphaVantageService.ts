@@ -5,7 +5,7 @@
 
 const AV_BASE = "https://www.alphavantage.co/query";
 const STORAGE_KEY = "av_api_key";
-const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 export const getApiKey = (): string =>
   localStorage.getItem(STORAGE_KEY) ?? "";

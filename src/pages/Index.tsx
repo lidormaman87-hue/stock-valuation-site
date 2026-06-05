@@ -24,7 +24,7 @@ import {
 } from "@/lib/valuation";
 import { fetchStockData } from "@/services/stockDataService";
 import { setApiKey, getApiKey, fetchHistoricalData, type HistoricalData } from "@/services/alphaVantageService";
-import { setFinnhubKey, getFinnhubKey } from "@/services/finnhubService";
+import { setFinnhubKey, getFinnhubKey, fetchFinnhubHistorical, type FinnhubHistoricalData } from "@/services/finnhubService";
 import { FinancialDashboardSection } from "@/components/FinancialDashboardSection";
 import TradingViewWidget from "@/components/TradingViewWidget";
 
@@ -150,7 +150,7 @@ const Index = () => {
   const [trigger, setTrigger] = useState(0);
   const [ticker, setTicker] = useState("AAPL");
   const [loadingTicker, setLoadingTicker] = useState(false);
-  const [historicalData, setHistoricalData] = useState<HistoricalData | null>(null);
+  const [historicalData, setHistoricalData] = useState<HistoricalData | FinnhubHistoricalData | null>(null);
   const [loadingHistorical, setLoadingHistorical] = useState(false);
 
   const STORAGE_KEY = "saved-stocks-v1";
@@ -196,12 +196,27 @@ const Index = () => {
         toast.warning(`נטען בהצלחה. הנתונים הבאים לא נטענו אוטומטית: ${data.missing.join(", ")}`);
       } else {
         toast.success(`נתונים נטענו בהצלחה עבור ${data.companyName ?? t}`);
-        // Fetch historical data from Alpha Vantage (normalized, reliable field names)
+        // Fetch historical data — try Finnhub first (unlimited), fallback to Alpha Vantage
         setLoadingHistorical(true);
-        fetchHistoricalData(t)
-          .then(setHistoricalData)
-          .catch(() => {})
-          .finally(() => setLoadingHistorical(false));
+        const loadHistorical = async () => {
+          // Try Finnhub
+          if (getFinnhubKey()) {
+            try {
+              const fh = await fetchFinnhubHistorical(t);
+              // Check if Finnhub returned meaningful data
+              const hasData = fh.income.revenues.some((p) => p.value !== null);
+              if (hasData) { setHistoricalData(fh); return; }
+            } catch { /* fallthrough */ }
+          }
+          // Fallback: Alpha Vantage
+          if (getApiKey()) {
+            try {
+              const av = await fetchHistoricalData(t);
+              setHistoricalData(av);
+            } catch { /* silent */ }
+          }
+        };
+        loadHistorical().finally(() => setLoadingHistorical(false));
       }
     } catch (err) {
       toast.dismiss(loadingId);
@@ -844,10 +859,17 @@ const Index = () => {
                   const t = ticker.trim().toUpperCase();
                   if (!t) return;
                   setLoadingHistorical(true);
-                  fetchHistoricalData(t, p)
-                    .then(setHistoricalData)
-                    .catch(() => {})
-                    .finally(() => setLoadingHistorical(false));
+                  (async () => {
+                    if (getFinnhubKey()) {
+                      try {
+                        const fh = await fetchFinnhubHistorical(t, p);
+                        if (fh.income.revenues.some((x) => x.value !== null)) { setHistoricalData(fh); return; }
+                      } catch { /* fallthrough */ }
+                    }
+                    if (getApiKey()) {
+                      try { setHistoricalData(await fetchHistoricalData(t, p)); } catch { /* silent */ }
+                    }
+                  })().finally(() => setLoadingHistorical(false));
                 }}
               />
             </div>

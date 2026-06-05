@@ -14,7 +14,7 @@ export const setFinnhubKey = (key: string) =>
   localStorage.setItem(STORAGE_KEY, key.trim());
 
 /* ── Cache (24h) ───────────────────────────────────────── */
-const CACHE_TTL = 24 * 60 * 60 * 1000;
+const CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const cacheGet = (k: string): any | null => {
