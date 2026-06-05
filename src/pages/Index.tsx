@@ -29,6 +29,7 @@ import { FinancialDashboardSection } from "@/components/FinancialDashboardSectio
 import TradingViewWidget from "@/components/TradingViewWidget";
 import { StockScreener } from "@/components/StockScreener";
 import { StockAnalysis, setGeminiKey, getGeminiKey } from "@/components/StockAnalysis";
+import { GrowthForecast } from "@/components/GrowthForecast";
 
 // Initialize API keys on first load
 if (!getApiKey())     setApiKey("LPL9LH322EVZ8F3W");
@@ -644,6 +645,13 @@ const Index = () => {
               <div className="mt-4">
                 <StockScreener />
               </div>
+
+              {/* Growth Forecast */}
+              {loadedStockData && ticker && (
+                <div className="mt-4">
+                  <GrowthForecast ticker={ticker} />
+                </div>
+              )}
             </div>
 
             {/* Results */}
