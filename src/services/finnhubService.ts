@@ -185,10 +185,14 @@ export async function fetchFinnhubHistorical(
   const t = ticker.trim().toUpperCase();
   const freq = period === "quarterly" ? "quarterly" : "annual";
 
-  const [profileRaw, finRaw, metricsRaw] = await Promise.all([
+  const [profileRaw, finRaw, metricsRaw, quarterlyRaw] = await Promise.all([
     fhFetch("/stock/profile2", { symbol: t }),
     fhFetch("/stock/financials-reported", { symbol: t, freq }),
     fhFetch("/stock/metric", { symbol: t, metric: "all" }),
+    // Always fetch quarterly for TTM computation (only when in annual mode)
+    period === "annual"
+      ? fhFetch("/stock/financials-reported", { symbol: t, freq: "quarterly" })
+      : Promise.resolve(null),
   ]);
 
   const reports: any[] = (finRaw?.data ?? [])
@@ -279,10 +283,60 @@ export async function fetchFinnhubHistorical(
   const missing: string[] = [];
   if (!reports.length) missing.push("אין דוחות כספיים");
 
+  // ── TTM from last 4 quarters ──────────────────────────────
+  const qSource = period === "annual" ? quarterlyRaw : finRaw;
+  const qReports: any[] = (qSource?.data ?? [])
+    .filter((r: any) => r.quarter !== 0)
+    .sort((a: any, b: any) => a.year !== b.year ? b.year - a.year : b.quarter - a.quarter)
+    .slice(0, 4);
+
+  const sumQ = (...concepts: string[]): number | null => {
+    const vals = qReports.map((r) => findConcept(ic(r), ...concepts));
+    if (vals.every((v) => v === null)) return null;
+    return vals.reduce((s, v) => (s ?? 0) + (v ?? 0), 0 as number);
+  };
+  const sumQCF = (...concepts: string[]): number | null => {
+    const vals = qReports.map((r) => findConcept(cf(r), ...concepts));
+    if (vals.every((v) => v === null)) return null;
+    return vals.reduce((s, v) => (s ?? 0) + (v ?? 0), 0 as number);
+  };
+
+  const ttmLabel = "TTM";
+
+  // TTM income
+  const ttmRevenue  = sumQ("RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet", "RevenueNet");
+  const ttmGross    = sumQ("GrossProfit");
+  const ttmOp       = sumQ("OperatingIncomeLoss");
+  const ttmNet      = sumQ("NetIncomeLoss", "NetIncome");
+  const ttmEPS      = n(m.epsBasicExclExtraItemsTTM ?? m.epsInclExtraItemsTTM);
+  const ttmOCF      = sumQCF("NetCashProvidedByUsedInOperatingActivities");
+  const ttmCapex    = sumQCF("PaymentsToAcquirePropertyPlantAndEquipment", "CapitalExpenditures");
+  const ttmSBC      = sumQCF("ShareBasedCompensation", "AllocatedShareBasedCompensationExpense");
+  const ttmFCF      = ttmOCF !== null && ttmCapex !== null ? ttmOCF - Math.abs(ttmCapex) : null;
+  const ttmNI_CF    = sumQCF("NetIncomeLoss", "NetIncome");
+
+  // Use Finnhub TTM metrics for margins (more accurate)
+  const ttmNetMargin  = n(m.netProfitMarginTTM);
+  const ttmGrossMargin= n(m.grossMarginTTM);
+
+  const addTTM = (series: SeriesPoint[], val: number | null): SeriesPoint[] =>
+    val !== null ? [...series, { date: ttmLabel, value: val }] : series;
+
+  const revenuesFinal        = addTTM(revenues,        ttmRevenue);
+  const grossProfitFinal     = addTTM(grossProfit,     ttmGross);
+  const operatingIncomeFinal = addTTM(operatingIncome, ttmOp);
+  const netIncomeFinal       = addTTM(netIncome,       ttmNet);
+  const epsFinal             = addTTM(eps,             ttmEPS);
+  const ocfFinal             = addTTM(operatingCashFlow, ttmOCF);
+  const capexFinal           = addTTM(capitalExpenditures, ttmCapex);
+  const sbcFinal             = addTTM(stockBasedComp,  ttmSBC);
+  const fcfFinal             = addTTM(freeCashFlow,    ttmFCF);
+  const cfNIFinal            = addTTM(cfNetIncome,     ttmNI_CF);
+
   return {
     ticker: t,
     companyName: profileRaw?.name ?? null,
-    income:  { revenues, grossProfit, operatingIncome, netIncome, eps, sharesDiluted, dividendsPerShare, rule40 },
+    income:  { revenues: revenuesFinal, grossProfit: grossProfitFinal, operatingIncome: operatingIncomeFinal, netIncome: netIncomeFinal, eps: epsFinal, sharesDiluted, dividendsPerShare, rule40 },
     ratios:  {
       pe:           snap(n(m.peBasicExclExtraTTM ?? m.peTTM)),
       pb:           snap(n(m.pbAnnual)),
@@ -292,7 +346,7 @@ export async function fetchFinnhubHistorical(
       debtToEquity,
     },
     balance:  { totalAssets, totalLiabilities, totalEquity, totalDebt, cashAndShortTerm, totalCurrentAssets, totalCurrentLiabilities },
-    cashflow: { operatingCashFlow, freeCashFlow, capitalExpenditures, stockBasedCompensation: stockBasedComp, netIncome: cfNetIncome },
+    cashflow: { operatingCashFlow: ocfFinal, freeCashFlow: fcfFinal, capitalExpenditures: capexFinal, stockBasedCompensation: sbcFinal, netIncome: cfNIFinal },
     missing,
   };
 }
