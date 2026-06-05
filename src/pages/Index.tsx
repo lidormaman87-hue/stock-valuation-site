@@ -27,10 +27,13 @@ import { setApiKey, getApiKey, fetchHistoricalData, type HistoricalData } from "
 import { setFinnhubKey, getFinnhubKey, fetchFinnhubHistorical, type FinnhubHistoricalData } from "@/services/finnhubService";
 import { FinancialDashboardSection } from "@/components/FinancialDashboardSection";
 import TradingViewWidget from "@/components/TradingViewWidget";
+import { StockScreener } from "@/components/StockScreener";
+import { StockAnalysis, setGeminiKey, getGeminiKey } from "@/components/StockAnalysis";
 
 // Initialize API keys on first load
 if (!getApiKey())     setApiKey("LPL9LH322EVZ8F3W");
 if (!getFinnhubKey()) setFinnhubKey("d8gnm4pr01qhjpmoshagd8gnm4pr01qhjpmoshb0");
+if (!getGeminiKey())  setGeminiKey("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");
 
 const TARGET_SHEET = "הערכת שווי מסכמת";
 
@@ -152,6 +155,7 @@ const Index = () => {
   const [loadingTicker, setLoadingTicker] = useState(false);
   const [historicalData, setHistoricalData] = useState<HistoricalData | FinnhubHistoricalData | null>(null);
   const [loadingHistorical, setLoadingHistorical] = useState(false);
+  const [loadedStockData, setLoadedStockData] = useState<import("@/services/stockDataService").StockData | null>(null);
 
   const STORAGE_KEY = "saved-stocks-v1";
   const [savedStocks, setSavedStocks] = useState<SavedStock[]>(() => {
@@ -179,6 +183,7 @@ const Index = () => {
     const loadingId = toast.loading(`טוען נתונים עבור ${t}...`);
     try {
       const data = await fetchStockData(t);
+      setLoadedStockData(data);
       setInputs((prev) => ({
         ...prev,
         stockName: data.companyName ?? t,
@@ -634,6 +639,11 @@ const Index = () => {
                   </AccordionContent>
                 </AccordionItem>
               </Accordion>
+
+              {/* Stock Screener */}
+              <div className="mt-4">
+                <StockScreener />
+              </div>
             </div>
 
             {/* Results */}
@@ -838,6 +848,11 @@ const Index = () => {
               )}
             </div>
           </div>
+
+          {/* AI Stock Analysis */}
+          {loadedStockData && ticker && (
+            <StockAnalysis ticker={ticker} stockData={loadedStockData} />
+          )}
 
           {/* TradingView Chart */}
           {inputs.stockName && ticker && (
