@@ -200,47 +200,48 @@ function groupByYear(timestamps: number[], closes: (number | null)[]): SeriesPoi
     }));
 }
 
-/** Fetch annual average closing prices — Yahoo Finance primary, Finnhub candles fallback */
+/** Fetch annual average closing prices — tries multiple sources */
 export async function fetchAnnualPrices(ticker: string, years = 10): Promise<SeriesPoint[]> {
-  const t = ticker.trim().toUpperCase();
-
-  const ck = `annual_prices_v2_${t}_${years}`;
+  const t  = ticker.trim().toUpperCase();
+  const ck = `annual_prices_v3_${t}_${years}`;
   const cached = cacheGet(ck);
   if (cached) return cached;
 
-  // ── Primary: Yahoo Finance chart API ──────────────────────
-  try {
-    const url   = `https://query2.finance.yahoo.com/v8/finance/chart/${t}?interval=1mo&range=${years}y`;
-    const proxy = `https://corsproxy.io/?${encodeURIComponent(url)}`;
-    const res   = await fetch(proxy, { signal: AbortSignal.timeout(8000) });
-    if (res.ok) {
-      const json   = await res.json();
+  // ── 1. Yahoo Finance via multiple proxies (weekly data = more robust) ──
+  const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1wk&range=${years}y`;
+  const proxies  = [
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`,
+    `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`,
+  ];
+  for (const proxy of proxies) {
+    try {
+      const res = await fetch(proxy, { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) continue;
+      const text = await res.text();
+      if (!text.trimStart().startsWith('{')) continue; // HTML error page guard
+      const json   = JSON.parse(text);
       const result = json?.chart?.result?.[0];
-      if (result) {
-        const ts: number[]     = result.timestamp ?? [];
+      if (result?.timestamp?.length > 0) {
+        const ts: number[]          = result.timestamp;
         const cs: (number | null)[] = result.indicators?.quote?.[0]?.close ?? [];
         const prices = groupByYear(ts, cs);
-        if (prices.length > 0) {
-          cacheSet(ck, prices);
-          return prices;
-        }
+        if (prices.length > 0) { cacheSet(ck, prices); return prices; }
       }
-    }
-  } catch { /* fallthrough to Finnhub */ }
+    } catch { /* try next proxy */ }
+  }
 
-  // ── Fallback: Finnhub candles ─────────────────────────────
-  try {
-    const now  = Math.floor(Date.now() / 1000);
-    const from = now - years * 365 * 24 * 3600;
-    const data = await fhFetch("/stock/candle", { symbol: t, resolution: "M", from: String(from), to: String(now) });
-    if (data && data.s !== "no_data" && data.c?.length) {
-      const prices = groupByYear(data.t as number[], data.c as number[]);
-      if (prices.length > 0) {
-        cacheSet(ck, prices);
-        return prices;
+  // ── 2. Finnhub candles — weekly then daily ────────────────
+  for (const resolution of ["W", "D"] as const) {
+    try {
+      const now  = Math.floor(Date.now() / 1000);
+      const from = now - years * 365 * 24 * 3600;
+      const data = await fhFetch("/stock/candle", { symbol: t, resolution, from: String(from), to: String(now) });
+      if (data?.s !== "no_data" && data?.c?.length > 0) {
+        const prices = groupByYear(data.t as number[], data.c as (number | null)[]);
+        if (prices.length > 0) { cacheSet(ck, prices); return prices; }
       }
-    }
-  } catch { /* non-fatal */ }
+    } catch { /* try next */ }
+  }
 
   return [];
 }
@@ -389,58 +390,72 @@ export async function fetchFinnhubHistorical(
   const missing: string[] = [];
   if (!reports.length) missing.push("אין דוחות כספיים");
 
-  // ── Historical valuation ratios: annual avg price × shares / financials ──
+  // ── Historical valuation ratios ───────────────────────────
   let peHistorical:   SeriesPoint[] = [];
   let pfcfHistorical: SeriesPoint[] = [];
   let psHistorical:   SeriesPoint[] = [];
   let pbHistorical:   SeriesPoint[] = [];
+
+  // Helper: extract from Finnhub metric series (no extra API call — already in metricsRaw)
+  const fromMetricSeries = (key: string): SeriesPoint[] => {
+    const arr: { period: string; v: number }[] = metricsRaw?.series?.annual?.[key] ?? [];
+    return arr
+      .map((item) => ({
+        date:  String(new Date(item.period).getFullYear()),
+        value: +Number(item.v).toFixed(1),
+      }))
+      .filter((p) => p.value !== null && isFinite(p.value) && p.value > 0)
+      .sort((a, b) => a.date.localeCompare(b.date));
+  };
+
+  // Try Finnhub metric series first (instant — already fetched)
+  peHistorical = fromMetricSeries("peBasicExclExtraTTM") || fromMetricSeries("peTTM");
+  psHistorical = fromMetricSeries("psTTM") || fromMetricSeries("psAnnual");
+  pbHistorical = fromMetricSeries("pbAnnual");
+
+  // For any ratio still empty (or for P/FCF which Finnhub doesn't provide), compute from annual prices
   try {
+    const needsPrices = peHistorical.length === 0 || psHistorical.length === 0 ||
+                        pbHistorical.length === 0;
     const annualPrices = await fetchAnnualPrices(t, 10);
-    const priceMap  = new Map(annualPrices.map((p) => [p.date, p.value]));
-    const sharesMap = new Map(sharesDiluted.map((p) => [p.date, p.value]));
 
-    // Helper: approximate annual market cap = avg price × diluted shares
-    const mktCap = (date: string): number | null => {
-      const price  = priceMap.get(date);
-      const shares = sharesMap.get(date);
-      return price && shares ? price * shares : null;
-    };
+    if (annualPrices.length > 0) {
+      const priceMap  = new Map(annualPrices.map((p) => [p.date, p.value]));
+      const sharesMap = new Map(sharesDiluted.map((p) => [p.date, p.value]));
+      const mktCap    = (date: string): number | null => {
+        const price  = priceMap.get(date);
+        const shares = sharesMap.get(date);
+        return price && shares ? price * shares : null;
+      };
 
-    // P/E = price / EPS
-    peHistorical = eps
-      .filter((e) => e.value !== null && e.value !== 0 && priceMap.has(e.date))
-      .map((e) => ({
-        date: e.date,
-        value: +(priceMap.get(e.date)! / e.value!).toFixed(1),
-      }));
+      if (peHistorical.length === 0) {
+        peHistorical = eps
+          .filter((e) => e.value !== null && e.value !== 0 && priceMap.has(e.date))
+          .map((e) => ({ date: e.date, value: +(priceMap.get(e.date)! / e.value!).toFixed(1) }));
+      }
 
-    // P/FCF = market cap / FCF (only when FCF > 0)
-    pfcfHistorical = freeCashFlow
-      .filter((r) => r.value !== null && r.value > 0 && priceMap.has(r.date) && sharesMap.has(r.date))
-      .map((r) => {
-        const mc = mktCap(r.date);
-        return mc ? { date: r.date, value: +(mc / r.value!).toFixed(1) } : null;
-      })
-      .filter((p): p is SeriesPoint => p !== null);
+      // P/FCF always computed (not in Finnhub series)
+      pfcfHistorical = freeCashFlow
+        .filter((r) => r.value !== null && r.value > 0 && priceMap.has(r.date) && sharesMap.has(r.date))
+        .map((r) => { const mc = mktCap(r.date); return mc ? { date: r.date, value: +(mc / r.value!).toFixed(1) } : null; })
+        .filter((p): p is SeriesPoint => p !== null);
 
-    // P/S = market cap / revenue
-    psHistorical = revenues
-      .filter((r) => r.value !== null && r.value !== 0 && priceMap.has(r.date) && sharesMap.has(r.date))
-      .map((r) => {
-        const mc = mktCap(r.date);
-        return mc ? { date: r.date, value: +(mc / r.value!).toFixed(1) } : null;
-      })
-      .filter((p): p is SeriesPoint => p !== null);
+      if (psHistorical.length === 0) {
+        psHistorical = revenues
+          .filter((r) => r.value !== null && r.value !== 0 && priceMap.has(r.date) && sharesMap.has(r.date))
+          .map((r) => { const mc = mktCap(r.date); return mc ? { date: r.date, value: +(mc / r.value!).toFixed(1) } : null; })
+          .filter((p): p is SeriesPoint => p !== null);
+      }
 
-    // P/B = market cap / equity (only when equity > 0)
-    pbHistorical = totalEquity
-      .filter((r) => r.value !== null && r.value > 0 && priceMap.has(r.date) && sharesMap.has(r.date))
-      .map((r) => {
-        const mc = mktCap(r.date);
-        return mc ? { date: r.date, value: +(mc / r.value!).toFixed(1) } : null;
-      })
-      .filter((p): p is SeriesPoint => p !== null);
+      if (pbHistorical.length === 0) {
+        pbHistorical = totalEquity
+          .filter((r) => r.value !== null && r.value > 0 && priceMap.has(r.date) && sharesMap.has(r.date))
+          .map((r) => { const mc = mktCap(r.date); return mc ? { date: r.date, value: +(mc / r.value!).toFixed(1) } : null; })
+          .filter((p): p is SeriesPoint => p !== null);
+      }
 
+      void needsPrices; // used above
+    }
   } catch { /* non-fatal */ }
 
   // ── TTM from last 4 quarters ──────────────────────────────
