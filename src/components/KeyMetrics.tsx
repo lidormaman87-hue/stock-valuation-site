@@ -1,12 +1,48 @@
 /**
  * KeyMetrics — live snapshot of key valuation & profitability ratios.
- * Data source: Finviz (via CORS proxy).
+ * Primary source: Finnhub (direct API, no proxy needed).
+ * Forward EPS: Yahoo Finance via proxy (optional — shows "—" if unavailable).
  */
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, BarChart2 } from "lucide-react";
-import { fetchFinvizMetrics, type FinvizMetrics } from "@/services/finvizService";
+import { fetchKeyMetrics, type FinnhubKeyMetrics } from "@/services/finnhubService";
 import { toast } from "sonner";
+
+/* ── Optional: Forward EPS from Yahoo Finance ─────────────── */
+async function fetchForwardEPS(ticker: string): Promise<number | null> {
+  const t = ticker.trim().toUpperCase();
+  // Try cached value first
+  const ck = `fwd_eps_${t}`;
+  try {
+    const raw = localStorage.getItem(ck);
+    if (raw) {
+      const { ts, v } = JSON.parse(raw);
+      if (Date.now() - ts < 6 * 3600 * 1000) return v;
+    }
+  } catch {}
+
+  const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${t}?modules=defaultKeyStatistics`;
+  const proxies = [
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+    `https://corsproxy.io/?${encodeURIComponent(url)}`,
+  ];
+  for (const proxy of proxies) {
+    try {
+      const res = await fetch(proxy, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) continue;
+      const text = await res.text();
+      if (!text.trimStart().startsWith("{")) continue;
+      const json = JSON.parse(text);
+      const v = json?.quoteSummary?.result?.[0]?.defaultKeyStatistics?.forwardEps?.raw ?? null;
+      if (v !== null && isFinite(Number(v))) {
+        try { localStorage.setItem(ck, JSON.stringify({ ts: Date.now(), v: Number(v) })); } catch {}
+        return Number(v);
+      }
+    } catch { /* try next */ }
+  }
+  return null;
+}
 
 /* ── Metric row ──────────────────────────────────────────── */
 interface MetricItemProps {
@@ -36,10 +72,8 @@ const MetricItem = ({ label, value, suffix = "", decimals = 1, hint }: MetricIte
         className={`text-sm font-bold tabular-nums ${
           display === "—"
             ? "text-muted-foreground/50"
-            : isPos
-            ? "text-emerald-600"
-            : isNeg
-            ? "text-red-500"
+            : isPos ? "text-emerald-600"
+            : isNeg ? "text-red-500"
             : "text-foreground"
         }`}
       >
@@ -53,42 +87,58 @@ const MetricItem = ({ label, value, suffix = "", decimals = 1, hint }: MetricIte
 interface Props { ticker: string }
 
 export function KeyMetrics({ ticker }: Props) {
-  const [metrics, setMetrics] = useState<FinvizMetrics | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [metrics,    setMetrics]    = useState<FinnhubKeyMetrics | null>(null);
+  const [forwardEPS, setForwardEPS] = useState<number | null>(null);
+  const [loading,    setLoading]    = useState(false);
 
   useEffect(() => {
     if (!ticker) return;
     setLoading(true);
     setMetrics(null);
-    fetchFinvizMetrics(ticker)
-      .then(setMetrics)
+    setForwardEPS(null);
+
+    // Finnhub is mandatory; forward EPS is best-effort
+    fetchKeyMetrics(ticker)
+      .then((m) => {
+        setMetrics(m);
+        // Try to get forward EPS in the background (don't await)
+        fetchForwardEPS(ticker).then(setForwardEPS).catch(() => {});
+      })
       .catch((e) => toast.error((e as Error).message))
       .finally(() => setLoading(false));
   }, [ticker]);
 
-  // Forward PEG = Fwd P/E ÷ EPS growth next 5Y
+  // Forward P/E = current price / forward EPS
+  const forwardPE: number | null = (() => {
+    if (metrics?.currentPrice && forwardEPS) {
+      const v = metrics.currentPrice / forwardEPS;
+      if (isFinite(v) && v > 0) return +v.toFixed(1);
+    }
+    return null;
+  })();
+
+  // Forward PEG = Forward P/E / EPS growth 3Y %
   const forwardPEG: number | null = (() => {
-    if (!metrics?.forwardPE || !metrics.epsGrowthNext5Y || metrics.epsGrowthNext5Y <= 0)
-      return null;
-    const v = metrics.forwardPE / metrics.epsGrowthNext5Y;
+    const fpe = forwardPE ?? metrics?.pe ?? null;
+    const g   = metrics?.epsGrowth3Y ?? null;
+    if (!fpe || !g || g <= 0) return null;
+    const v = fpe / g;
     return isFinite(v) && v > 0 ? +v.toFixed(2) : null;
   })();
 
   const leftCol: MetricItemProps[] = [
-    { label: "P/E (TTM)",     value: metrics?.pe        ?? null, decimals: 1 },
-    { label: "Forward P/E",   value: metrics?.forwardPE ?? null, decimals: 1 },
-    { label: "P/S",           value: metrics?.ps        ?? null, decimals: 1 },
-    { label: "P/B",           value: metrics?.pb        ?? null, decimals: 1 },
-    { label: "P/FCF",         value: metrics?.pfcf      ?? null, decimals: 1 },
+    { label: "P/E (TTM)",   value: metrics?.pe        ?? null, decimals: 1 },
+    { label: "Forward P/E", value: forwardPE,                   decimals: 1 },
+    { label: "P/S",         value: metrics?.ps        ?? null, decimals: 1 },
+    { label: "P/B",         value: metrics?.pb        ?? null, decimals: 1 },
   ];
 
   const rightCol: MetricItemProps[] = [
-    { label: "ROE",           value: metrics?.roe       ?? null, suffix: "%", decimals: 1 },
-    { label: "ROA",           value: metrics?.roa       ?? null, suffix: "%", decimals: 1 },
-    { label: "ROI",           value: metrics?.roi       ?? null, suffix: "%", decimals: 1 },
-    { label: "PEG",           value: metrics?.peg       ?? null, decimals: 2 },
-    { label: "Forward PEG",   value: forwardPEG,                 decimals: 2,
-      hint: "Fwd P/E ÷ EPS next 5Y" },
+    { label: "ROE", value: metrics?.roe ?? null, suffix: "%", decimals: 1 },
+    { label: "ROA", value: metrics?.roa ?? null, suffix: "%", decimals: 1 },
+    { label: "ROI", value: metrics?.roi ?? null, suffix: "%", decimals: 1 },
+    { label: "PEG",         value: metrics?.peg ?? null, decimals: 2 },
+    { label: "Forward PEG", value: forwardPEG,             decimals: 2 },
   ];
 
   return (
@@ -98,7 +148,7 @@ export function KeyMetrics({ ticker }: Props) {
           <BarChart2 className="h-4 w-4 text-primary" />
           מדדים פיננסיים עדכניים — {ticker}
         </CardTitle>
-        <p className="text-xs text-muted-foreground">מקור: Yahoo Finance · Finnhub</p>
+        <p className="text-xs text-muted-foreground">מקור: Finnhub</p>
       </CardHeader>
 
       <CardContent>
