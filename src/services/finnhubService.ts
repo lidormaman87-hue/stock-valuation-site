@@ -152,7 +152,11 @@ export interface FinnhubHistoricalData {
     rule40: SeriesPoint[];
   };
   ratios: {
-    pe: SeriesPoint[];
+    pe: SeriesPoint[];              // snapshot
+    peHistorical: SeriesPoint[];    // annual avg price / annual EPS
+    pfcfHistorical: SeriesPoint[];  // annual market cap / annual FCF
+    psHistorical: SeriesPoint[];    // annual market cap / annual revenue
+    pbHistorical: SeriesPoint[];    // annual market cap / annual equity
     pb: SeriesPoint[];
     ps: SeriesPoint[];
     roe: SeriesPoint[];
@@ -176,6 +180,69 @@ export interface FinnhubHistoricalData {
     netIncome: SeriesPoint[];
   };
   missing: string[];
+}
+
+/** Fetch annual average closing prices using Finnhub candle data */
+export async function fetchAnnualPrices(ticker: string, years = 10): Promise<SeriesPoint[]> {
+  const t = ticker.trim().toUpperCase();
+  const now  = Math.floor(Date.now() / 1000);
+  const from = now - years * 365 * 24 * 3600;
+
+  const ck = `annual_prices_${t}_${years}`;
+  const cached = cacheGet(ck);
+  if (cached) return cached;
+
+  const data = await fhFetch("/stock/candle", { symbol: t, resolution: "M", from: String(from), to: String(now) });
+  if (!data || data.s === "no_data" || !data.c?.length) return [];
+
+  // Group monthly closes by year → compute annual average
+  const byYear = new Map<number, number[]>();
+  for (let i = 0; i < data.t.length; i++) {
+    const yr = new Date(data.t[i] * 1000).getFullYear();
+    if (!byYear.has(yr)) byYear.set(yr, []);
+    byYear.get(yr)!.push(data.c[i]);
+  }
+
+  const result: SeriesPoint[] = Array.from(byYear.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([year, closes]) => ({
+      date: String(year),
+      value: +(closes.reduce((s, v) => s + v, 0) / closes.length).toFixed(2),
+    }));
+
+  cacheSet(ck, result);
+  return result;
+}
+
+/* ── Key Metrics snapshot ──────────────────────────────── */
+export interface FinnhubKeyMetrics {
+  pe:         number | null;  // P/E TTM
+  ps:         number | null;  // P/S TTM
+  pb:         number | null;  // P/B annual
+  roe:        number | null;  // % TTM
+  roa:        number | null;  // % TTM
+  roi:        number | null;  // % TTM
+  peg:        number | null;  // PEG annual
+  currentPrice: number | null;
+}
+
+export async function fetchKeyMetrics(ticker: string): Promise<FinnhubKeyMetrics> {
+  const t = ticker.trim().toUpperCase();
+  const [metricsRaw, quoteRaw] = await Promise.all([
+    fhFetch("/stock/metric", { symbol: t, metric: "all" }),
+    fhFetch("/quote", { symbol: t }),
+  ]);
+  const m = metricsRaw?.metric ?? {};
+  return {
+    pe:           n(m.peBasicExclExtraTTM ?? m.peTTM),
+    ps:           n(m.psTTM ?? m.psAnnual),
+    pb:           n(m.pbAnnual),
+    roe:          n(m.roeTTM ?? m.roeAnnual),
+    roa:          n(m.roaTTM ?? m.roaAnnual),
+    roi:          n(m.roiTTM ?? m.roiAnnual),
+    peg:          n(m.pegAnnual),
+    currentPrice: n(quoteRaw?.c),
+  };
 }
 
 export async function fetchFinnhubHistorical(
@@ -283,6 +350,60 @@ export async function fetchFinnhubHistorical(
   const missing: string[] = [];
   if (!reports.length) missing.push("אין דוחות כספיים");
 
+  // ── Historical valuation ratios: annual avg price × shares / financials ──
+  let peHistorical:   SeriesPoint[] = [];
+  let pfcfHistorical: SeriesPoint[] = [];
+  let psHistorical:   SeriesPoint[] = [];
+  let pbHistorical:   SeriesPoint[] = [];
+  try {
+    const annualPrices = await fetchAnnualPrices(t, 10);
+    const priceMap  = new Map(annualPrices.map((p) => [p.date, p.value]));
+    const sharesMap = new Map(sharesDiluted.map((p) => [p.date, p.value]));
+
+    // Helper: approximate annual market cap = avg price × diluted shares
+    const mktCap = (date: string): number | null => {
+      const price  = priceMap.get(date);
+      const shares = sharesMap.get(date);
+      return price && shares ? price * shares : null;
+    };
+
+    // P/E = price / EPS
+    peHistorical = eps
+      .filter((e) => e.value !== null && e.value !== 0 && priceMap.has(e.date))
+      .map((e) => ({
+        date: e.date,
+        value: +(priceMap.get(e.date)! / e.value!).toFixed(1),
+      }));
+
+    // P/FCF = market cap / FCF (only when FCF > 0)
+    pfcfHistorical = freeCashFlow
+      .filter((r) => r.value !== null && r.value > 0 && priceMap.has(r.date) && sharesMap.has(r.date))
+      .map((r) => {
+        const mc = mktCap(r.date);
+        return mc ? { date: r.date, value: +(mc / r.value!).toFixed(1) } : null;
+      })
+      .filter((p): p is SeriesPoint => p !== null);
+
+    // P/S = market cap / revenue
+    psHistorical = revenues
+      .filter((r) => r.value !== null && r.value !== 0 && priceMap.has(r.date) && sharesMap.has(r.date))
+      .map((r) => {
+        const mc = mktCap(r.date);
+        return mc ? { date: r.date, value: +(mc / r.value!).toFixed(1) } : null;
+      })
+      .filter((p): p is SeriesPoint => p !== null);
+
+    // P/B = market cap / equity (only when equity > 0)
+    pbHistorical = totalEquity
+      .filter((r) => r.value !== null && r.value > 0 && priceMap.has(r.date) && sharesMap.has(r.date))
+      .map((r) => {
+        const mc = mktCap(r.date);
+        return mc ? { date: r.date, value: +(mc / r.value!).toFixed(1) } : null;
+      })
+      .filter((p): p is SeriesPoint => p !== null);
+
+  } catch { /* non-fatal */ }
+
   // ── TTM from last 4 quarters ──────────────────────────────
   const qSource = period === "annual" ? quarterlyRaw : finRaw;
   const qReports: any[] = (qSource?.data ?? [])
@@ -338,9 +459,13 @@ export async function fetchFinnhubHistorical(
     companyName: profileRaw?.name ?? null,
     income:  { revenues: revenuesFinal, grossProfit: grossProfitFinal, operatingIncome: operatingIncomeFinal, netIncome: netIncomeFinal, eps: epsFinal, sharesDiluted, dividendsPerShare, rule40 },
     ratios:  {
-      pe:           snap(n(m.peBasicExclExtraTTM ?? m.peTTM)),
-      pb:           snap(n(m.pbAnnual)),
-      ps:           snap(n(m.psTTM)),
+      pe:             snap(n(m.peBasicExclExtraTTM ?? m.peTTM)),
+      peHistorical,
+      pfcfHistorical,
+      psHistorical,
+      pbHistorical,
+      pb:             snap(n(m.pbAnnual)),
+      ps:             snap(n(m.psTTM)),
       roe,
       currentRatio,
       debtToEquity,

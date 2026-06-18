@@ -25,16 +25,16 @@ import {
 import { fetchStockData } from "@/services/stockDataService";
 import { setApiKey, getApiKey, fetchHistoricalData, type HistoricalData } from "@/services/alphaVantageService";
 import { setFinnhubKey, getFinnhubKey, fetchFinnhubHistorical, type FinnhubHistoricalData } from "@/services/finnhubService";
+import type { ValuationCharts } from "@/components/FinancialDashboardSection";
 import { FinancialDashboardSection } from "@/components/FinancialDashboardSection";
 import TradingViewWidget from "@/components/TradingViewWidget";
 import { StockScreener } from "@/components/StockScreener";
-import { StockAnalysis, setGeminiKey, getGeminiKey } from "@/components/StockAnalysis";
+import { KeyMetrics } from "@/components/KeyMetrics";
 import { GrowthForecast } from "@/components/GrowthForecast";
 
 // Initialize API keys on first load
 if (!getApiKey())     setApiKey("LPL9LH322EVZ8F3W");
 if (!getFinnhubKey()) setFinnhubKey("d8gnm4pr01qhjpmoshagd8gnm4pr01qhjpmoshb0");
-setGeminiKey("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");
 
 const TARGET_SHEET = "הערכת שווי מסכמת";
 
@@ -857,9 +857,9 @@ const Index = () => {
             </div>
           </div>
 
-          {/* AI Stock Analysis */}
+          {/* Key Metrics Panel */}
           {loadedStockData && ticker && (
-            <StockAnalysis ticker={ticker} stockData={loadedStockData} />
+            <KeyMetrics ticker={ticker} />
           )}
 
           {/* TradingView Chart */}
@@ -878,6 +878,16 @@ const Index = () => {
             <div className="mt-2">
               <FinancialDashboardSection
                 data={historicalData}
+                valuationCharts={
+                  historicalData && "ratios" in historicalData && "peHistorical" in (historicalData as FinnhubHistoricalData).ratios
+                    ? {
+                        peHistorical:   (historicalData as FinnhubHistoricalData).ratios.peHistorical,
+                        pfcfHistorical: (historicalData as FinnhubHistoricalData).ratios.pfcfHistorical,
+                        psHistorical:   (historicalData as FinnhubHistoricalData).ratios.psHistorical,
+                        pbHistorical:   (historicalData as FinnhubHistoricalData).ratios.pbHistorical,
+                      } as ValuationCharts
+                    : undefined
+                }
                 onPeriodChange={(p) => {
                   const t = ticker.trim().toUpperCase();
                   if (!t) return;

@@ -13,6 +13,7 @@ import {
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Maximize2 } from "lucide-react";
 import type { HistoricalData, SeriesPoint } from "@/services/alphaVantageService";
+import type { FinnhubHistoricalData } from "@/services/finnhubService";
 
 // ── Colors ────────────────────────────────────────────────
 const C = {
@@ -439,17 +440,28 @@ const ControlsBar = ({
 );
 
 // ── Main component ────────────────────────────────────────
+export interface ValuationCharts {
+  peHistorical:   SeriesPoint[];
+  pfcfHistorical: SeriesPoint[];
+  psHistorical:   SeriesPoint[];
+  pbHistorical:   SeriesPoint[];
+}
+
 export function FinancialDashboardSection({
   data,
+  valuationCharts,
   onPeriodChange,
 }: {
   data: HistoricalData;
+  valuationCharts?: ValuationCharts;
   onPeriodChange?: (p: Period) => void;
 }) {
   const [range,  setRange]  = useState<Range>("ALL");
   const [period, setPeriod] = useState<Period>("annual");
 
-  const f = (s: SeriesPoint[]) => filterByRange(s, range);
+  // Filter TTM out of every series before displaying
+  const noTTM = (s: SeriesPoint[]) => s.filter((p) => p.date !== "TTM");
+  const f = (s: SeriesPoint[]) => filterByRange(noTTM(s), range);
 
   // Apply range filter to all series
   const income  = {
@@ -638,6 +650,42 @@ export function FinancialDashboardSection({
           />
         </div>
       </section>
+
+      {/* ── Valuation Ratios History ── */}
+      {valuationCharts && (
+        <section>
+          <SectionHeader
+            title="Valuation Ratios History"
+            subtitle="Historical price multiples based on annual average stock price (annual data only)"
+          />
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <SimpleChart
+              title="P/E History"
+              data={noTTM(valuationCharts.peHistorical)}
+              color={C.blue}
+              formatter={(v) => `${v.toFixed(1)}x`}
+            />
+            <SimpleChart
+              title="P/FCF History"
+              data={noTTM(valuationCharts.pfcfHistorical)}
+              color={C.green}
+              formatter={(v) => `${v.toFixed(1)}x`}
+            />
+            <SimpleChart
+              title="P/S History"
+              data={noTTM(valuationCharts.psHistorical)}
+              color={C.purple}
+              formatter={(v) => `${v.toFixed(1)}x`}
+            />
+            <SimpleChart
+              title="P/B History"
+              data={noTTM(valuationCharts.pbHistorical)}
+              color={C.teal}
+              formatter={(v) => `${v.toFixed(1)}x`}
+            />
+          </div>
+        </section>
+      )}
     </div>
   );
 }
