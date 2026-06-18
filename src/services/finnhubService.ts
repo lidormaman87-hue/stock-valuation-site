@@ -216,14 +216,15 @@ export async function fetchAnnualPrices(ticker: string, years = 10): Promise<Ser
 
 /* ── Key Metrics snapshot ──────────────────────────────── */
 export interface FinnhubKeyMetrics {
-  pe:         number | null;  // P/E TTM
-  ps:         number | null;  // P/S TTM
-  pb:         number | null;  // P/B annual
-  roe:        number | null;  // % TTM
-  roa:        number | null;  // % TTM
-  roi:        number | null;  // % TTM
-  peg:        number | null;  // PEG annual
-  currentPrice: number | null;
+  pe:            number | null;  // P/E TTM
+  ps:            number | null;  // P/S TTM
+  pb:            number | null;  // P/B annual
+  roe:           number | null;  // % TTM
+  roa:           number | null;  // % TTM
+  roi:           number | null;  // % TTM
+  peg:           number | null;  // PEG annual (from Finnhub or computed)
+  epsGrowth3Y:   number | null;  // EPS 3Y CAGR % (e.g. 15.5 = 15.5%)
+  currentPrice:  number | null;
 }
 
 export async function fetchKeyMetrics(ticker: string): Promise<FinnhubKeyMetrics> {
@@ -233,14 +234,21 @@ export async function fetchKeyMetrics(ticker: string): Promise<FinnhubKeyMetrics
     fhFetch("/quote", { symbol: t }),
   ]);
   const m = metricsRaw?.metric ?? {};
+  const pe           = n(m.peBasicExclExtraTTM ?? m.peTTM);
+  const epsGrowth3Y  = n(m.epsGrowth3Y);  // already in % e.g. 15.5
+  // PEG: use Finnhub's value or compute as P/E TTM / EPS growth 3Y
+  const peg = n(m.pegAnnual) ??
+    (pe !== null && epsGrowth3Y !== null && epsGrowth3Y !== 0
+      ? +(pe / epsGrowth3Y).toFixed(2) : null);
   return {
-    pe:           n(m.peBasicExclExtraTTM ?? m.peTTM),
+    pe,
     ps:           n(m.psTTM ?? m.psAnnual),
     pb:           n(m.pbAnnual),
     roe:          n(m.roeTTM ?? m.roeAnnual),
     roa:          n(m.roaTTM ?? m.roaAnnual),
     roi:          n(m.roiTTM ?? m.roiAnnual),
-    peg:          n(m.pegAnnual),
+    peg,
+    epsGrowth3Y,
     currentPrice: n(quoteRaw?.c),
   };
 }

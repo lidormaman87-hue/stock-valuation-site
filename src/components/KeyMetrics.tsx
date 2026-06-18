@@ -9,29 +9,18 @@ import { fetchKeyMetrics, type FinnhubKeyMetrics } from "@/services/finnhubServi
 import { toast } from "sonner";
 
 /* ── Yahoo Finance forward EPS ──────────────────────────── */
-interface ForwardData {
-  forwardEPS: number | null;
-  growthRate5Y: number | null; // decimal e.g. 0.15
-}
-
-async function fetchForwardData(ticker: string): Promise<ForwardData> {
+async function fetchForwardEPS(ticker: string): Promise<number | null> {
   try {
     const url = `https://query2.finance.yahoo.com/v1/finance/earningsTrend/${ticker.toUpperCase()}`;
     const proxy = `https://corsproxy.io/?${encodeURIComponent(url)}`;
     const res = await fetch(proxy);
-    if (!res.ok) return { forwardEPS: null, growthRate5Y: null };
+    if (!res.ok) return null;
     const json = await res.json();
     const trends: any[] = json?.earningsTrend?.result?.[0]?.trend ?? [];
-
     const nextYear = trends.find((t: any) => t.period === "+1y");
-    const fiveYear = trends.find((t: any) => t.period === "+5y");
-
-    const forwardEPS   = nextYear?.earningsEstimate?.avg?.raw ?? null;
-    const growthRate5Y = fiveYear?.growth?.raw ?? null;
-
-    return { forwardEPS, growthRate5Y };
+    return nextYear?.earningsEstimate?.avg?.raw ?? null;
   } catch {
-    return { forwardEPS: null, growthRate5Y: null };
+    return null;
   }
 }
 
@@ -77,47 +66,42 @@ interface Props {
 }
 
 export function KeyMetrics({ ticker }: Props) {
-  const [metrics,  setMetrics]  = useState<FinnhubKeyMetrics | null>(null);
-  const [forward,  setForward]  = useState<ForwardData | null>(null);
-  const [loading,  setLoading]  = useState(false);
+  const [metrics,    setMetrics]    = useState<FinnhubKeyMetrics | null>(null);
+  const [forwardEPS, setForwardEPS] = useState<number | null>(null);
+  const [loading,    setLoading]    = useState(false);
 
   useEffect(() => {
     if (!ticker) return;
     setLoading(true);
     setMetrics(null);
-    setForward(null);
+    setForwardEPS(null);
 
     Promise.all([
       fetchKeyMetrics(ticker),
-      fetchForwardData(ticker),
+      fetchForwardEPS(ticker),
     ])
-      .then(([m, f]) => { setMetrics(m); setForward(f); })
+      .then(([m, feps]) => { setMetrics(m); setForwardEPS(feps); })
       .catch((e) => toast.error((e as Error).message))
       .finally(() => setLoading(false));
   }, [ticker]);
 
   // Derived forward metrics
   const forwardPE: number | null = (() => {
-    if (!metrics?.currentPrice || !forward?.forwardEPS) return null;
-    const v = metrics.currentPrice / forward.forwardEPS;
+    if (!metrics?.currentPrice || !forwardEPS) return null;
+    const v = metrics.currentPrice / forwardEPS;
     return isFinite(v) && v > 0 ? +v.toFixed(1) : null;
   })();
 
+  // Use Finnhub epsGrowth3Y (already in %, e.g. 15.5) for PEG denominator
+  const growthPct = metrics?.epsGrowth3Y ?? null;
+
   const forwardPEG: number | null = (() => {
-    if (!forwardPE || !forward?.growthRate5Y || forward.growthRate5Y === 0) return null;
-    const g = forward.growthRate5Y * 100; // convert to % for PEG convention
-    const v = forwardPE / g;
+    if (!forwardPE || !growthPct || growthPct <= 0) return null;
+    const v = forwardPE / growthPct;
     return isFinite(v) && v > 0 ? +v.toFixed(2) : null;
   })();
 
-  const peg: number | null = (() => {
-    if (metrics?.peg !== null && metrics?.peg !== undefined) return metrics.peg;
-    // Fallback: P/E TTM / 5Y growth
-    if (!metrics?.pe || !forward?.growthRate5Y || forward.growthRate5Y === 0) return null;
-    const g = forward.growthRate5Y * 100;
-    const v = metrics.pe / g;
-    return isFinite(v) && v > 0 ? +v.toFixed(2) : null;
-  })();
+  const peg: number | null = metrics?.peg ?? null;
 
   const metricsLeft: MetricItemProps[] = [
     { label: "P/E (TTM)",       value: metrics?.pe         ?? null, decimals: 1, hint: "Price / Earnings TTM" },
