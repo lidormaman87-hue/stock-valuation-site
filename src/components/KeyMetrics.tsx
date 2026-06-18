@@ -98,7 +98,7 @@ export function KeyMetrics({ ticker }: Props) {
           <BarChart2 className="h-4 w-4 text-primary" />
           מדדים פיננסיים עדכניים — {ticker}
         </CardTitle>
-        <p className="text-xs text-muted-foreground">מקור: Finviz</p>
+        <p className="text-xs text-muted-foreground">מקור: Yahoo Finance · Finnhub</p>
       </CardHeader>
 
       <CardContent>
