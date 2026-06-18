@@ -1,46 +1,30 @@
 /**
  * KeyMetrics — live snapshot of key valuation & profitability ratios.
- * Fetches from Finnhub (free, cached) + Yahoo Finance for forward metrics.
+ * Data source: Finviz (via CORS proxy).
  */
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, BarChart2 } from "lucide-react";
-import { fetchKeyMetrics, type FinnhubKeyMetrics } from "@/services/finnhubService";
+import { fetchFinvizMetrics, type FinvizMetrics } from "@/services/finvizService";
 import { toast } from "sonner";
 
-/* ── Yahoo Finance forward EPS ──────────────────────────── */
-async function fetchForwardEPS(ticker: string): Promise<number | null> {
-  try {
-    const url = `https://query2.finance.yahoo.com/v1/finance/earningsTrend/${ticker.toUpperCase()}`;
-    const proxy = `https://corsproxy.io/?${encodeURIComponent(url)}`;
-    const res = await fetch(proxy);
-    if (!res.ok) return null;
-    const json = await res.json();
-    const trends: any[] = json?.earningsTrend?.result?.[0]?.trend ?? [];
-    const nextYear = trends.find((t: any) => t.period === "+1y");
-    return nextYear?.earningsEstimate?.avg?.raw ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/* ── Metric item ─────────────────────────────────────────── */
+/* ── Metric row ──────────────────────────────────────────── */
 interface MetricItemProps {
   label: string;
   value: number | null;
   suffix?: string;
   decimals?: number;
   hint?: string;
-  highlight?: boolean;
 }
 
 const MetricItem = ({ label, value, suffix = "", decimals = 1, hint }: MetricItemProps) => {
-  const display = value !== null && isFinite(value)
-    ? `${value.toFixed(decimals)}${suffix}`
-    : "—";
+  const display =
+    value !== null && isFinite(value)
+      ? `${value.toFixed(decimals)}${suffix}`
+      : "—";
 
-  const isGood = value !== null && suffix === "%" && value > 0;
-  const isNeg  = value !== null && suffix === "%" && value < 0;
+  const isPos = value !== null && suffix === "%" && value > 0;
+  const isNeg = value !== null && suffix === "%" && value < 0;
 
   return (
     <div className="flex items-center justify-between py-2.5 border-b border-border/30 last:border-0">
@@ -48,82 +32,63 @@ const MetricItem = ({ label, value, suffix = "", decimals = 1, hint }: MetricIte
         <span className="text-sm text-muted-foreground">{label}</span>
         {hint && <p className="text-[10px] text-muted-foreground/70 mt-0.5">{hint}</p>}
       </div>
-      <span className={`text-sm font-bold tabular-nums ${
-        display === "—" ? "text-muted-foreground/50" :
-        isGood ? "text-emerald-600" :
-        isNeg  ? "text-red-500" :
-        "text-foreground"
-      }`}>
+      <span
+        className={`text-sm font-bold tabular-nums ${
+          display === "—"
+            ? "text-muted-foreground/50"
+            : isPos
+            ? "text-emerald-600"
+            : isNeg
+            ? "text-red-500"
+            : "text-foreground"
+        }`}
+      >
         {display}
       </span>
     </div>
   );
 };
 
-/* ── Component ──────────────────────────────────────────── */
-interface Props {
-  ticker: string;
-}
+/* ── Component ───────────────────────────────────────────── */
+interface Props { ticker: string }
 
 export function KeyMetrics({ ticker }: Props) {
-  const [metrics,    setMetrics]    = useState<FinnhubKeyMetrics | null>(null);
-  const [forwardEPS, setForwardEPS] = useState<number | null>(null);
-  const [loading,    setLoading]    = useState(false);
+  const [metrics, setMetrics] = useState<FinvizMetrics | null>(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!ticker) return;
     setLoading(true);
     setMetrics(null);
-    setForwardEPS(null);
-
-    Promise.all([
-      fetchKeyMetrics(ticker),
-      fetchForwardEPS(ticker),
-    ])
-      .then(([m, feps]) => { setMetrics(m); setForwardEPS(feps); })
+    fetchFinvizMetrics(ticker)
+      .then(setMetrics)
       .catch((e) => toast.error((e as Error).message))
       .finally(() => setLoading(false));
   }, [ticker]);
 
-  // growthPct = EPS 3Y CAGR in % (e.g. 15.5 means 15.5%)
-  const growthPct = metrics?.epsGrowth3Y ?? null;
-
-  // Forward P/E: prefer Yahoo Finance estimate; fallback = P/E TTM / (1 + g)
-  const forwardPE: number | null = (() => {
-    if (metrics?.currentPrice && forwardEPS) {
-      const v = metrics.currentPrice / forwardEPS;
-      if (isFinite(v) && v > 0) return +v.toFixed(1);
-    }
-    // fallback approximation
-    if (metrics?.pe && growthPct && growthPct > 0) {
-      const v = metrics.pe / (1 + growthPct / 100);
-      if (isFinite(v) && v > 0) return +v.toFixed(1);
-    }
-    return null;
-  })();
-
-  // Forward PEG = Forward P/E / EPS growth %
+  // Forward PEG = Fwd P/E ÷ EPS growth next 5Y
   const forwardPEG: number | null = (() => {
-    if (!forwardPE || !growthPct || growthPct <= 0) return null;
-    const v = forwardPE / growthPct;
+    if (!metrics?.forwardPE || !metrics.epsGrowthNext5Y || metrics.epsGrowthNext5Y <= 0)
+      return null;
+    const v = metrics.forwardPE / metrics.epsGrowthNext5Y;
     return isFinite(v) && v > 0 ? +v.toFixed(2) : null;
   })();
 
-  const peg: number | null = metrics?.peg ?? null;
-
-  const metricsLeft: MetricItemProps[] = [
-    { label: "P/E (TTM)",       value: metrics?.pe         ?? null, decimals: 1, hint: "Price / Earnings TTM" },
-    { label: "Forward P/E",     value: forwardPE,                   decimals: 1, hint: "Price / אומדן EPS שנה הבאה" },
-    { label: "P/S (TTM)",       value: metrics?.ps         ?? null, decimals: 1, hint: "Price / Sales TTM" },
-    { label: "P/B",             value: metrics?.pb         ?? null, decimals: 1, hint: "Price / Book Value" },
+  const leftCol: MetricItemProps[] = [
+    { label: "P/E (TTM)",     value: metrics?.pe        ?? null, decimals: 1 },
+    { label: "Forward P/E",   value: metrics?.forwardPE ?? null, decimals: 1 },
+    { label: "P/S",           value: metrics?.ps        ?? null, decimals: 1 },
+    { label: "P/B",           value: metrics?.pb        ?? null, decimals: 1 },
+    { label: "P/FCF",         value: metrics?.pfcf      ?? null, decimals: 1 },
   ];
 
-  const metricsRight: MetricItemProps[] = [
-    { label: "ROE",             value: metrics?.roe        ?? null, suffix: "%", decimals: 1, hint: "Return on Equity TTM" },
-    { label: "ROA",             value: metrics?.roa        ?? null, suffix: "%", decimals: 1, hint: "Return on Assets TTM" },
-    { label: "ROI",             value: metrics?.roi        ?? null, suffix: "%", decimals: 1, hint: "Return on Investment TTM" },
-    { label: "PEG",             value: peg,                         decimals: 2, hint: "P/E / שיעור צמיחה 5Y" },
-    { label: "Forward PEG",     value: forwardPEG,                  decimals: 2, hint: "Forward P/E / צמיחת EPS 5Y" },
+  const rightCol: MetricItemProps[] = [
+    { label: "ROE",           value: metrics?.roe       ?? null, suffix: "%", decimals: 1 },
+    { label: "ROA",           value: metrics?.roa       ?? null, suffix: "%", decimals: 1 },
+    { label: "ROI",           value: metrics?.roi       ?? null, suffix: "%", decimals: 1 },
+    { label: "PEG",           value: metrics?.peg       ?? null, decimals: 2 },
+    { label: "Forward PEG",   value: forwardPEG,                 decimals: 2,
+      hint: "Fwd P/E ÷ EPS next 5Y" },
   ];
 
   return (
@@ -133,7 +98,7 @@ export function KeyMetrics({ ticker }: Props) {
           <BarChart2 className="h-4 w-4 text-primary" />
           מדדים פיננסיים עדכניים — {ticker}
         </CardTitle>
-        <p className="text-xs text-muted-foreground">נתוני Finnhub · Forward מ-Yahoo Finance</p>
+        <p className="text-xs text-muted-foreground">מקור: Finviz</p>
       </CardHeader>
 
       <CardContent>
@@ -146,17 +111,9 @@ export function KeyMetrics({ ticker }: Props) {
 
         {!loading && metrics && (
           <div className="grid md:grid-cols-2 gap-0 md:gap-6">
-            {/* Left column */}
-            <div className="divide-y divide-border/0">
-              {metricsLeft.map((m) => (
-                <MetricItem key={m.label} {...m} />
-              ))}
-            </div>
-            {/* Right column */}
-            <div className="divide-y divide-border/0 border-t md:border-t-0 mt-2 md:mt-0 pt-2 md:pt-0">
-              {metricsRight.map((m) => (
-                <MetricItem key={m.label} {...m} />
-              ))}
+            <div>{leftCol.map((m) => <MetricItem key={m.label} {...m} />)}</div>
+            <div className="border-t md:border-t-0 mt-2 md:mt-0 pt-2 md:pt-0">
+              {rightCol.map((m) => <MetricItem key={m.label} {...m} />)}
             </div>
           </div>
         )}

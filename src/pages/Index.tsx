@@ -30,7 +30,6 @@ import { FinancialDashboardSection } from "@/components/FinancialDashboardSectio
 import TradingViewWidget from "@/components/TradingViewWidget";
 import { StockScreener } from "@/components/StockScreener";
 import { KeyMetrics } from "@/components/KeyMetrics";
-import { GrowthForecast } from "@/components/GrowthForecast";
 
 // Initialize API keys on first load
 if (!getApiKey())     setApiKey("LPL9LH322EVZ8F3W");
@@ -646,10 +645,10 @@ const Index = () => {
                 <StockScreener />
               </div>
 
-              {/* Growth Forecast */}
+              {/* Key Metrics */}
               {loadedStockData && ticker && (
                 <div className="mt-4">
-                  <GrowthForecast ticker={ticker} />
+                  <KeyMetrics ticker={ticker} />
                 </div>
               )}
             </div>
@@ -856,11 +855,6 @@ const Index = () => {
               )}
             </div>
           </div>
-
-          {/* Key Metrics Panel */}
-          {loadedStockData && ticker && (
-            <KeyMetrics ticker={ticker} />
-          )}
 
           {/* TradingView Chart */}
           {inputs.stockName && ticker && (
