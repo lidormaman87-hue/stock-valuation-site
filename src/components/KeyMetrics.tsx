@@ -85,16 +85,24 @@ export function KeyMetrics({ ticker }: Props) {
       .finally(() => setLoading(false));
   }, [ticker]);
 
-  // Derived forward metrics
-  const forwardPE: number | null = (() => {
-    if (!metrics?.currentPrice || !forwardEPS) return null;
-    const v = metrics.currentPrice / forwardEPS;
-    return isFinite(v) && v > 0 ? +v.toFixed(1) : null;
-  })();
-
-  // Use Finnhub epsGrowth3Y (already in %, e.g. 15.5) for PEG denominator
+  // growthPct = EPS 3Y CAGR in % (e.g. 15.5 means 15.5%)
   const growthPct = metrics?.epsGrowth3Y ?? null;
 
+  // Forward P/E: prefer Yahoo Finance estimate; fallback = P/E TTM / (1 + g)
+  const forwardPE: number | null = (() => {
+    if (metrics?.currentPrice && forwardEPS) {
+      const v = metrics.currentPrice / forwardEPS;
+      if (isFinite(v) && v > 0) return +v.toFixed(1);
+    }
+    // fallback approximation
+    if (metrics?.pe && growthPct && growthPct > 0) {
+      const v = metrics.pe / (1 + growthPct / 100);
+      if (isFinite(v) && v > 0) return +v.toFixed(1);
+    }
+    return null;
+  })();
+
+  // Forward PEG = Forward P/E / EPS growth %
   const forwardPEG: number | null = (() => {
     if (!forwardPE || !growthPct || growthPct <= 0) return null;
     const v = forwardPE / growthPct;

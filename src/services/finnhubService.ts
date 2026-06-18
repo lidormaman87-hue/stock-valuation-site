@@ -182,36 +182,67 @@ export interface FinnhubHistoricalData {
   missing: string[];
 }
 
-/** Fetch annual average closing prices using Finnhub candle data */
+/** Group monthly price data into annual averages */
+function groupByYear(timestamps: number[], closes: (number | null)[]): SeriesPoint[] {
+  const byYear = new Map<number, number[]>();
+  for (let i = 0; i < timestamps.length; i++) {
+    const c = closes[i];
+    if (c == null || !isFinite(c)) continue;
+    const yr = new Date(timestamps[i] * 1000).getFullYear();
+    if (!byYear.has(yr)) byYear.set(yr, []);
+    byYear.get(yr)!.push(c);
+  }
+  return Array.from(byYear.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([year, cs]) => ({
+      date: String(year),
+      value: +(cs.reduce((s, v) => s + v, 0) / cs.length).toFixed(2),
+    }));
+}
+
+/** Fetch annual average closing prices — Yahoo Finance primary, Finnhub candles fallback */
 export async function fetchAnnualPrices(ticker: string, years = 10): Promise<SeriesPoint[]> {
   const t = ticker.trim().toUpperCase();
-  const now  = Math.floor(Date.now() / 1000);
-  const from = now - years * 365 * 24 * 3600;
 
-  const ck = `annual_prices_${t}_${years}`;
+  const ck = `annual_prices_v2_${t}_${years}`;
   const cached = cacheGet(ck);
   if (cached) return cached;
 
-  const data = await fhFetch("/stock/candle", { symbol: t, resolution: "M", from: String(from), to: String(now) });
-  if (!data || data.s === "no_data" || !data.c?.length) return [];
+  // ── Primary: Yahoo Finance chart API ──────────────────────
+  try {
+    const url   = `https://query2.finance.yahoo.com/v8/finance/chart/${t}?interval=1mo&range=${years}y`;
+    const proxy = `https://corsproxy.io/?${encodeURIComponent(url)}`;
+    const res   = await fetch(proxy, { signal: AbortSignal.timeout(8000) });
+    if (res.ok) {
+      const json   = await res.json();
+      const result = json?.chart?.result?.[0];
+      if (result) {
+        const ts: number[]     = result.timestamp ?? [];
+        const cs: (number | null)[] = result.indicators?.quote?.[0]?.close ?? [];
+        const prices = groupByYear(ts, cs);
+        if (prices.length > 0) {
+          cacheSet(ck, prices);
+          return prices;
+        }
+      }
+    }
+  } catch { /* fallthrough to Finnhub */ }
 
-  // Group monthly closes by year → compute annual average
-  const byYear = new Map<number, number[]>();
-  for (let i = 0; i < data.t.length; i++) {
-    const yr = new Date(data.t[i] * 1000).getFullYear();
-    if (!byYear.has(yr)) byYear.set(yr, []);
-    byYear.get(yr)!.push(data.c[i]);
-  }
+  // ── Fallback: Finnhub candles ─────────────────────────────
+  try {
+    const now  = Math.floor(Date.now() / 1000);
+    const from = now - years * 365 * 24 * 3600;
+    const data = await fhFetch("/stock/candle", { symbol: t, resolution: "M", from: String(from), to: String(now) });
+    if (data && data.s !== "no_data" && data.c?.length) {
+      const prices = groupByYear(data.t as number[], data.c as number[]);
+      if (prices.length > 0) {
+        cacheSet(ck, prices);
+        return prices;
+      }
+    }
+  } catch { /* non-fatal */ }
 
-  const result: SeriesPoint[] = Array.from(byYear.entries())
-    .sort(([a], [b]) => a - b)
-    .map(([year, closes]) => ({
-      date: String(year),
-      value: +(closes.reduce((s, v) => s + v, 0) / closes.length).toFixed(2),
-    }));
-
-  cacheSet(ck, result);
-  return result;
+  return [];
 }
 
 /* ── Key Metrics snapshot ──────────────────────────────── */
