@@ -79,9 +79,10 @@ const Row = ({
 interface Props { ticker: string }
 
 export function CAPMSection({ ticker }: Props) {
-  const [rf,      setRf]      = useState<number | null>(null);
-  const [beta,    setBeta]    = useState<number | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [rf,        setRf]        = useState<number>(3.75);  // default = ריבית פד נוכחית
+  const [rfEditing, setRfEditing] = useState(false);
+  const [beta,      setBeta]      = useState<number | null>(null);
+  const [loading,   setLoading]   = useState(false);
 
   useEffect(() => {
     if (!ticker) return;
@@ -90,23 +91,20 @@ export function CAPMSection({ ticker }: Props) {
 
     Promise.all([fetchFedRate(), fetchKeyMetrics(ticker)])
       .then(([rate, metrics]) => {
-        setRf(rate);
+        if (rate !== null) setRf(rate);   // override default only if fetch succeeds
         setBeta(metrics.beta);
       })
       .finally(() => setLoading(false));
   }, [ticker]);
 
   // E[Rm] − Rf  =  פרמיית הסיכון
-  const erp: number | null = rf !== null ? +(MARKET_RETURN - rf).toFixed(2) : null;
+  const erp   = +(MARKET_RETURN - rf).toFixed(2);
 
   // CAPM = Rf + β × (E[Rm] − Rf)
   const capm: number | null =
-    rf !== null && beta !== null && erp !== null
-      ? +(rf + beta * erp).toFixed(2)
-      : null;
+    beta !== null ? +(rf + beta * erp).toFixed(2) : null;
 
-  const pct = (v: number | null, decimals = 2) =>
-    v !== null ? `${v.toFixed(decimals)}%` : "—";
+  const pct = (v: number, decimals = 2) => `${v.toFixed(decimals)}%`;
 
   return (
     <Card className="card-elegant">
@@ -130,12 +128,40 @@ export function CAPMSection({ ticker }: Props) {
 
         {!loading && (
           <div>
-            <Row
-              label="ריבית הפד (Rf)"
-              value={pct(rf)}
-              sub="Effective Federal Funds Rate — FRED"
-              badge="live"
-            />
+            {/* Rf — editable */}
+            <div className="flex items-center justify-between py-2.5 border-b border-border/30">
+              <div>
+                <span className="text-sm text-muted-foreground">ריבית הפד (Rf)</span>
+                <p className="text-[10px] text-muted-foreground/70 mt-0.5">
+                  Effective Federal Funds Rate — FRED
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5">
+                {rfEditing ? (
+                  <input
+                    type="number"
+                    min={0} max={20} step={0.01}
+                    value={rf}
+                    autoFocus
+                    onChange={(e) => setRf(Math.max(0, Math.min(20, Number(e.target.value))))}
+                    onBlur={() => setRfEditing(false)}
+                    onKeyDown={(e) => e.key === "Enter" && setRfEditing(false)}
+                    className="w-16 text-right text-sm font-bold tabular-nums bg-transparent border border-primary rounded-md px-2 py-0.5 focus:outline-none"
+                  />
+                ) : (
+                  <button
+                    onClick={() => setRfEditing(true)}
+                    title="לחץ לעריכה"
+                    className="text-sm font-bold tabular-nums text-foreground hover:text-primary hover:underline transition-colors"
+                  >
+                    {pct(rf)}
+                  </button>
+                )}
+                <span className="text-[10px] bg-secondary text-muted-foreground rounded px-1.5 py-0.5">
+                  {rfEditing ? "✎" : "live"}
+                </span>
+              </div>
+            </div>
             <Row
               label="תוחלת תיק השוק E[Rm]"
               value={pct(MARKET_RETURN, 1)}
@@ -156,14 +182,14 @@ export function CAPMSection({ ticker }: Props) {
             <Row
               label="פרמיית סיכון E[Rm] − Rf"
               value={pct(erp)}
-              sub={rf !== null ? `${MARKET_RETURN}% − ${rf.toFixed(2)}%` : undefined}
+              sub={`${MARKET_RETURN}% − ${rf.toFixed(2)}%`}
             />
 
             {/* Result */}
             <div className="flex items-center justify-between pt-4 mt-2 border-t-2 border-primary/30">
               <div>
                 <p className="font-semibold text-foreground">שיעור היוון CAPM</p>
-                {capm !== null && rf !== null && beta !== null && erp !== null && (
+                {capm !== null && beta !== null && (
                   <p className="text-[10px] text-muted-foreground/70 mt-0.5 font-mono">
                     {rf.toFixed(2)}% + {beta.toFixed(2)} × {erp.toFixed(2)}%
                   </p>
