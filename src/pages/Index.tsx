@@ -30,6 +30,7 @@ import { FinancialDashboardSection } from "@/components/FinancialDashboardSectio
 import TradingViewWidget from "@/components/TradingViewWidget";
 import { StockScreener } from "@/components/StockScreener";
 import { KeyMetrics } from "@/components/KeyMetrics";
+import { CAPMSection } from "@/components/CAPMSection";
 
 // Initialize API keys on first load
 if (!getApiKey())     setApiKey("LPL9LH322EVZ8F3W");
@@ -644,6 +645,13 @@ const Index = () => {
               <div className="mt-4">
                 <StockScreener />
               </div>
+
+              {/* CAPM Discount Rate */}
+              {loadedStockData && ticker && (
+                <div className="mt-4">
+                  <CAPMSection ticker={ticker} />
+                </div>
+              )}
 
               {/* Key Metrics */}
               {loadedStockData && ticker && (

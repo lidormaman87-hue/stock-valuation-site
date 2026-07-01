@@ -257,6 +257,7 @@ export interface FinnhubKeyMetrics {
   peg:           number | null;  // PEG annual (from Finnhub or computed)
   epsGrowth3Y:   number | null;  // EPS 3Y CAGR % (e.g. 15.5 = 15.5%)
   currentPrice:  number | null;
+  beta:          number | null;  // stock beta (for CAPM)
 }
 
 export async function fetchKeyMetrics(ticker: string): Promise<FinnhubKeyMetrics> {
@@ -282,6 +283,7 @@ export async function fetchKeyMetrics(ticker: string): Promise<FinnhubKeyMetrics
     peg,
     epsGrowth3Y,
     currentPrice: n(quoteRaw?.c),
+    beta:         n(m.beta),
   };
 }
 
