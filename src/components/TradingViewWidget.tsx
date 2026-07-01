@@ -36,7 +36,10 @@ const TradingViewWidget = memo(({ symbol, exchange, isDark }: Props) => {
         allow_symbol_change: true,
         save_image: false,
         container_id: containerId,
-        studies: ["RSI@tv-basicstudies", "MACD@tv-basicstudies"],
+        studies: [
+          { id: "RSI@tv-basicstudies", inputs: { length: 10 } },
+          { id: "StochasticRSI@tv-basicstudies" },
+        ],
         show_popup_button: true,
         popup_width: "1000",
         popup_height: "650",
