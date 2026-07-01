@@ -172,7 +172,7 @@ function Gauge({ score }: { score: number }) {
 }
 
 /* ── Component ───────────────────────────────────────────── */
-export function FearGreedGauge() {
+export function FearGreedGauge({ ticker }: { ticker?: string }) {
   const [data,    setData]    = useState<FGIData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(false);
@@ -189,7 +189,8 @@ export function FearGreedGauge() {
     finally { setLoading(false); }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // Refresh with fresh data whenever a new ticker is loaded
+  useEffect(() => { load(!!ticker); }, [ticker, load]);
 
   const color = data ? scoreColor(data.score) : "#9a9a9a";
 

@@ -686,7 +686,7 @@ const Index = () => {
 
               {/* Fear & Greed Index */}
               <div className="mt-4">
-                <FearGreedGauge />
+                <FearGreedGauge ticker={ticker} />
               </div>
             </div>
 
