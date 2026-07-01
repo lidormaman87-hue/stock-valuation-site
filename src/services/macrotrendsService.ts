@@ -116,7 +116,7 @@ function toAnnual(data: { date: string; value: number }[]): RatioPoint[] {
     .sort((a, b) => a.year - b.year);
 }
 
-/* ── Single metric fetch ───────────────────────────────────── */
+/* ── Single metric fetch — via /api/macrotrends (Vercel SSR) ── */
 const METRICS: Record<string, string> = {
   pe:   "pe-ratio",
   ps:   "price-sales",
@@ -130,28 +130,17 @@ async function fetchOne(
   metricKey: string
 ): Promise<{ date: string; value: number }[]> {
   const metric = METRICS[metricKey];
-  const url = `https://www.macrotrends.net/stocks/charts/${ticker}/${slug}/${metric}`;
+  const apiUrl = `/api/macrotrends?ticker=${encodeURIComponent(ticker)}&slug=${encodeURIComponent(slug)}&metric=${encodeURIComponent(metric)}`;
 
-  const proxies = [
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-    `https://corsproxy.io/?${encodeURIComponent(url)}`,
-  ];
-
-  for (const proxy of proxies) {
-    try {
-      const res = await fetch(proxy, { signal: AbortSignal.timeout(15_000) });
-      if (!res.ok) continue;
-
-      const html = await res.text();
-      // Sanity check: must contain macrotrends content
-      if (!html.includes("macrotrends") || html.length < 5_000) continue;
-
-      const rows = parseTable(html);
-      if (rows.length > 2) return rows;
-    } catch {
-      // Try next proxy
+  try {
+    const res = await fetch(apiUrl, { signal: AbortSignal.timeout(20_000) });
+    if (!res.ok) return [];
+    const json = await res.json();
+    // API returns { data: [{year, value}] } — already annual
+    if (Array.isArray(json.data) && json.data.length > 0) {
+      return json.data; // already annual, skip parseTable+toAnnual in caller
     }
-  }
+  } catch {}
 
   return [];
 }
@@ -175,20 +164,15 @@ export async function fetchMacrotrends(
   const slug = nameToSlug(companyName);
 
   // Fetch all 4 metrics in parallel
-  const [peRaw, psRaw, pbRaw, pfcfRaw] = await Promise.all([
+  // fetchOne already returns annual data from the API
+  const [pe, ps, pb, pfcf] = await Promise.all([
     fetchOne(ticker, slug, "pe"),
     fetchOne(ticker, slug, "ps"),
     fetchOne(ticker, slug, "pb"),
     fetchOne(ticker, slug, "pfcf"),
   ]);
 
-  const result: MacrotrendsHistorical = {
-    pe:   toAnnual(peRaw),
-    ps:   toAnnual(psRaw),
-    pb:   toAnnual(pbRaw),
-    pfcf: toAnnual(pfcfRaw),
-    slug,
-  };
+  const result: MacrotrendsHistorical = { pe, ps, pb, pfcf, slug };
 
   // Cache only if we got meaningful data
   if (result.pe.length > 0 || result.ps.length > 0) {
