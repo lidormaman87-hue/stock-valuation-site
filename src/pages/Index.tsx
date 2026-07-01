@@ -926,10 +926,10 @@ const Index = () => {
                   // Prefer MacroTrends (direct ratios, more accurate) over Finnhub
                   macrotrendsData && macrotrendsData.pe.length > 0
                     ? {
-                        peHistorical:   macrotrendsData.pe,
-                        pfcfHistorical: macrotrendsData.pfcf,
-                        psHistorical:   macrotrendsData.ps,
-                        pbHistorical:   macrotrendsData.pb,
+                        peHistorical:   macrotrendsData.pe.map(p => ({ date: String(p.year), value: p.value })),
+                        pfcfHistorical: macrotrendsData.pfcf.map(p => ({ date: String(p.year), value: p.value })),
+                        psHistorical:   macrotrendsData.ps.map(p => ({ date: String(p.year), value: p.value })),
+                        pbHistorical:   macrotrendsData.pb.map(p => ({ date: String(p.year), value: p.value })),
                       } as ValuationCharts
                     : historicalData && "ratios" in historicalData && "peHistorical" in (historicalData as FinnhubHistoricalData).ratios
                     ? {

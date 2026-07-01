@@ -128,7 +128,7 @@ async function fetchOne(
   ticker: string,
   slug: string,
   metricKey: string
-): Promise<{ date: string; value: number }[]> {
+): Promise<RatioPoint[]> {
   const metric = METRICS[metricKey];
   const apiUrl = `/api/macrotrends?ticker=${encodeURIComponent(ticker)}&slug=${encodeURIComponent(slug)}&metric=${encodeURIComponent(metric)}`;
 
@@ -136,9 +136,9 @@ async function fetchOne(
     const res = await fetch(apiUrl, { signal: AbortSignal.timeout(20_000) });
     if (!res.ok) return [];
     const json = await res.json();
-    // API returns { data: [{year, value}] } — already annual
+    // API returns { data: [{year: number, value: number}] }
     if (Array.isArray(json.data) && json.data.length > 0) {
-      return json.data; // already annual, skip parseTable+toAnnual in caller
+      return json.data as RatioPoint[];
     }
   } catch {}
 
