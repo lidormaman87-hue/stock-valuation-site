@@ -185,7 +185,7 @@ export function StockAnalysis({ ticker, stockData }: Props) {
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center gap-2 text-base">
             <Brain className="h-4 w-4 text-primary" />
-            ניתוח סקירה — {ticker}
+            סקירת AI להכרת החברה — {ticker}
             <span className="text-xs font-normal text-muted-foreground">מופעל על ידי Groq AI</span>
           </CardTitle>
           <div className="flex items-center gap-2">
@@ -231,7 +231,7 @@ export function StockAnalysis({ ticker, stockData }: Props) {
             {loading ? (
               <><Loader2 className="h-4 w-4 ml-2 animate-spin" /> AI מנתח את {ticker}...</>
             ) : (
-              <><Brain className="h-4 w-4 ml-2" /> הפק ניתוח סקירה מלא</>
+              <><Brain className="h-4 w-4 ml-2" /> הפק סקירת AI מלאה</>
             )}
           </Button>
         )}

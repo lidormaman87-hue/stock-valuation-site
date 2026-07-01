@@ -31,6 +31,7 @@ import TradingViewWidget from "@/components/TradingViewWidget";
 import { StockScreener } from "@/components/StockScreener";
 import { KeyMetrics } from "@/components/KeyMetrics";
 import { CAPMSection } from "@/components/CAPMSection";
+import { StockAnalysis } from "@/components/StockAnalysis";
 
 // Initialize API keys on first load
 if (!getApiKey())     setApiKey("LPL9LH322EVZ8F3W");
@@ -885,6 +886,11 @@ const Index = () => {
               )}
             </div>
           </div>
+
+          {/* AI Company Review */}
+          {loadedStockData && ticker && (
+            <StockAnalysis ticker={ticker} stockData={loadedStockData} />
+          )}
 
           {/* TradingView Chart */}
           {inputs.stockName && ticker && (
