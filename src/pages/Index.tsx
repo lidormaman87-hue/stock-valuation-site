@@ -32,6 +32,7 @@ import { StockScreener } from "@/components/StockScreener";
 import { KeyMetrics } from "@/components/KeyMetrics";
 import { CAPMSection } from "@/components/CAPMSection";
 import { StockAnalysis } from "@/components/StockAnalysis";
+import { FearGreedGauge } from "@/components/FearGreedGauge";
 
 // Initialize API keys on first load
 if (!getApiKey())     setApiKey("LPL9LH322EVZ8F3W");
@@ -682,6 +683,11 @@ const Index = () => {
                   <KeyMetrics ticker={ticker} />
                 </div>
               )}
+
+              {/* Fear & Greed Index */}
+              <div className="mt-4">
+                <FearGreedGauge />
+              </div>
             </div>
 
             {/* Results */}
