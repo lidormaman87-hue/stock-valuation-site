@@ -203,22 +203,45 @@ function groupByYear(timestamps: number[], closes: (number | null)[]): SeriesPoi
 /** Fetch annual average closing prices — tries multiple sources */
 export async function fetchAnnualPrices(ticker: string, years = 10): Promise<SeriesPoint[]> {
   const t  = ticker.trim().toUpperCase();
-  const ck = `annual_prices_v3_${t}_${years}`;
+  const ck = `annual_prices_v4_${t}_${years}`;
   const cached = cacheGet(ck);
-  if (cached) return cached;
+  if (cached && (cached as SeriesPoint[]).length > 0) return cached;
 
-  // ── 1. Yahoo Finance via multiple proxies (weekly data = more robust) ──
+  // ── 1. Stooq — free, no CORS, 20+ years history ──────────
+  try {
+    const stooqUrl = `https://stooq.com/q/d/l/?s=${t.toLowerCase()}.us&i=w`;
+    const res = await fetch(stooqUrl, { signal: AbortSignal.timeout(10000) });
+    if (res.ok) {
+      const text = await res.text();
+      if (text.includes(",") && !text.toLowerCase().includes("no data")) {
+        const lines = text.trim().split("\n").slice(1); // skip header
+        const ts: number[] = [], cs: number[] = [];
+        for (const line of lines) {
+          const parts = line.split(",");
+          const date  = parts[0]?.trim();
+          const close = parseFloat(parts[4]?.trim() ?? "");
+          if (date && isFinite(close) && close > 0) {
+            ts.push(new Date(date).getTime() / 1000);
+            cs.push(close);
+          }
+        }
+        const prices = groupByYear(ts, cs);
+        if (prices.length > 3) { cacheSet(ck, prices); return prices; }
+      }
+    }
+  } catch { /* try next */ }
+
+  // ── 2. Yahoo Finance via proxies ──────────────────────────
   const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${t}?interval=1wk&range=${years}y`;
-  const proxies  = [
+  for (const proxy of [
     `https://api.allorigins.win/raw?url=${encodeURIComponent(yahooUrl)}`,
     `https://corsproxy.io/?${encodeURIComponent(yahooUrl)}`,
-  ];
-  for (const proxy of proxies) {
+  ]) {
     try {
       const res = await fetch(proxy, { signal: AbortSignal.timeout(10000) });
       if (!res.ok) continue;
       const text = await res.text();
-      if (!text.trimStart().startsWith('{')) continue; // HTML error page guard
+      if (!text.trimStart().startsWith("{")) continue;
       const json   = JSON.parse(text);
       const result = json?.chart?.result?.[0];
       if (result?.timestamp?.length > 0) {
@@ -227,10 +250,10 @@ export async function fetchAnnualPrices(ticker: string, years = 10): Promise<Ser
         const prices = groupByYear(ts, cs);
         if (prices.length > 0) { cacheSet(ck, prices); return prices; }
       }
-    } catch { /* try next proxy */ }
+    } catch { /* try next */ }
   }
 
-  // ── 2. Finnhub candles — weekly then daily ────────────────
+  // ── 3. Finnhub candles ────────────────────────────────────
   for (const resolution of ["W", "D"] as const) {
     try {
       const now  = Math.floor(Date.now() / 1000);
@@ -411,14 +434,17 @@ export async function fetchFinnhubHistorical(
   };
 
   // Try Finnhub metric series first (instant — already fetched)
-  peHistorical = fromMetricSeries("peBasicExclExtraTTM") || fromMetricSeries("peTTM");
-  psHistorical = fromMetricSeries("psTTM") || fromMetricSeries("psAnnual");
-  pbHistorical = fromMetricSeries("pbAnnual");
+  // Note: use .length checks — empty [] is truthy so || doesn't work
+  const tryKeys = (keys: string[]) => {
+    for (const k of keys) { const s = fromMetricSeries(k); if (s.length > 0) return s; }
+    return [];
+  };
+  peHistorical = tryKeys(["peBasicExclExtraTTM", "peTTM", "pe", "peExclExtraItems"]);
+  psHistorical = tryKeys(["psTTM", "psAnnual", "ps"]);
+  pbHistorical = tryKeys(["pbAnnual", "pb"]);
 
   // For any ratio still empty (or for P/FCF which Finnhub doesn't provide), compute from annual prices
   try {
-    const needsPrices = peHistorical.length === 0 || psHistorical.length === 0 ||
-                        pbHistorical.length === 0;
     const annualPrices = await fetchAnnualPrices(t, 10);
 
     if (annualPrices.length > 0) {
@@ -456,7 +482,6 @@ export async function fetchFinnhubHistorical(
           .filter((p): p is SeriesPoint => p !== null);
       }
 
-      void needsPrices; // used above
     }
   } catch { /* non-fatal */ }
 
