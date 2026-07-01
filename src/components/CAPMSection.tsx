@@ -76,9 +76,12 @@ const Row = ({
 );
 
 /* ── Component ───────────────────────────────────────────── */
-interface Props { ticker: string }
+interface Props {
+  ticker: string;
+  onRateChange?: (rate: number) => void;  // called with CAPM rate as decimal (e.g. 0.109)
+}
 
-export function CAPMSection({ ticker }: Props) {
+export function CAPMSection({ ticker, onRateChange }: Props) {
   const [rf,        setRf]        = useState<number>(3.75);  // default = ריבית פד נוכחית
   const [rfEditing, setRfEditing] = useState(false);
   const [beta,      setBeta]      = useState<number | null>(null);
@@ -91,7 +94,7 @@ export function CAPMSection({ ticker }: Props) {
 
     Promise.all([fetchFedRate(), fetchKeyMetrics(ticker)])
       .then(([rate, metrics]) => {
-        if (rate !== null) setRf(rate);   // override default only if fetch succeeds
+        if (rate !== null) setRf(rate);
         setBeta(metrics.beta);
       })
       .finally(() => setLoading(false));
@@ -103,6 +106,11 @@ export function CAPMSection({ ticker }: Props) {
   // CAPM = Rf + β × (E[Rm] − Rf)
   const capm: number | null =
     beta !== null ? +(rf + beta * erp).toFixed(2) : null;
+
+  // Notify parent when CAPM changes
+  useEffect(() => {
+    if (capm !== null) onRateChange?.(+(capm / 100).toFixed(4));
+  }, [capm]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const pct = (v: number, decimals = 2) => `${v.toFixed(decimals)}%`;
 

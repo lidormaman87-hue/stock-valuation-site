@@ -9,7 +9,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Calculator, RotateCcw, Download, Upload, Info, TrendingUp, TrendingDown, AlertTriangle, Loader2, Search, Bookmark } from "lucide-react";
+import { Calculator, RotateCcw, Download, Upload, Info, TrendingUp, TrendingDown, AlertTriangle, Loader2, Search, Bookmark, Moon, Sun } from "lucide-react";
 import { SavedStocksDashboard, type SavedStock } from "@/components/SavedStocksDashboard";
 import { ValuationCharts } from "@/components/ValuationCharts";
 import { toast } from "sonner";
@@ -149,6 +149,16 @@ const StatCard = ({
 };
 
 const Index = () => {
+  const [isDark, setIsDark] = useState(() => {
+    const saved = localStorage.getItem("dark_mode");
+    return saved === "true";
+  });
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", isDark);
+    localStorage.setItem("dark_mode", String(isDark));
+  }, [isDark]);
+
   const [inputs, setInputs] = useState<ValuationInputs>(DEFAULT_INPUTS);
   const [autoUpdate, setAutoUpdate] = useState(true);
   const [trigger, setTrigger] = useState(0);
@@ -368,7 +378,7 @@ const Index = () => {
     <TooltipProvider delayDuration={150}>
       <div className="min-h-screen">
         {/* Header */}
-        <header className="border-b border-border/50 bg-white/85 backdrop-blur-xl sticky top-0 z-10"
+        <header className="border-b border-border/50 bg-background/85 backdrop-blur-xl sticky top-0 z-10"
           style={{ boxShadow: "0 1px 20px -4px hsl(224 40% 16% / 0.08)" }}>
           <div className="container py-3.5">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -384,18 +394,27 @@ const Index = () => {
               <div className="flex flex-wrap items-center gap-2">
                 <label className="cursor-pointer">
                   <input type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileUpload} />
-                  <span className="inline-flex items-center gap-1.5 rounded-xl border border-border/80 bg-white px-3 py-1.5 text-sm font-medium hover:bg-secondary transition-colors cursor-pointer shadow-sm">
+                  <span className="inline-flex items-center gap-1.5 rounded-xl border border-border/80 bg-card px-3 py-1.5 text-sm font-medium hover:bg-secondary transition-colors cursor-pointer shadow-sm">
                     <Upload className="h-3.5 w-3.5 text-muted-foreground" /> ייבוא Excel
                   </span>
                 </label>
-                <Button variant="outline" size="sm" className="rounded-xl shadow-sm border-border/80 bg-white hover:bg-secondary" onClick={handleReset}>
+                <Button variant="outline" size="sm" className="rounded-xl shadow-sm border-border/80 bg-card hover:bg-secondary" onClick={handleReset}>
                   <RotateCcw className="h-3.5 w-3.5 ml-1.5 text-muted-foreground" /> איפוס
                 </Button>
-                <Button onClick={handleExport} size="sm" variant="outline" className="rounded-xl shadow-sm border-border/80 bg-white hover:bg-secondary">
+                <Button onClick={handleExport} size="sm" variant="outline" className="rounded-xl shadow-sm border-border/80 bg-card hover:bg-secondary">
                   <Download className="h-3.5 w-3.5 ml-1.5 text-muted-foreground" /> ייצוא
                 </Button>
                 <Button onClick={handleCalculate} size="sm" className="rounded-xl text-white btn-primary-glow border-0">
                   <Calculator className="h-3.5 w-3.5 ml-1.5" /> חשב שווי
+                </Button>
+                {/* Dark mode toggle */}
+                <Button
+                  variant="outline" size="sm"
+                  className="rounded-xl shadow-sm border-border/80 bg-card hover:bg-secondary w-9 px-0"
+                  onClick={() => setIsDark((d) => !d)}
+                  title={isDark ? "מצב יום" : "מצב לילה"}
+                >
+                  {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                 </Button>
               </div>
             </div>
@@ -649,7 +668,10 @@ const Index = () => {
               {/* CAPM Discount Rate */}
               {loadedStockData && ticker && (
                 <div className="mt-4">
-                  <CAPMSection ticker={ticker} />
+                  <CAPMSection
+                    ticker={ticker}
+                    onRateChange={(rate) => set("discountRate", rate)}
+                  />
                 </div>
               )}
 
@@ -866,7 +888,7 @@ const Index = () => {
 
           {/* TradingView Chart */}
           {inputs.stockName && ticker && (
-            <TradingViewWidget symbol={ticker} />
+            <TradingViewWidget symbol={ticker} isDark={isDark} />
           )}
 
           {/* Historical Financial Dashboard */}

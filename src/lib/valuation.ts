@@ -70,7 +70,7 @@ export const DEFAULT_INPUTS: ValuationInputs = {
   netMargin: 0.13,
   currentMarketCap: 282.8,
   currentSharePrice: 270,
-  numberOfYears: 5,
+  numberOfYears: 3,
   peLow: 30,
   peMid: 35,
   peHigh: 40,

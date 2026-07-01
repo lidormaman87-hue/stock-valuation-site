@@ -1,18 +1,18 @@
 import { useEffect, useRef, memo } from "react";
 
 interface Props {
-  symbol: string;       // e.g. "AAPL"
-  exchange?: string;    // e.g. "NASDAQ" — optional, TradingView auto-detects
+  symbol: string;
+  exchange?: string;
+  isDark?: boolean;
 }
 
-const TradingViewWidget = memo(({ symbol, exchange }: Props) => {
+const TradingViewWidget = memo(({ symbol, exchange, isDark }: Props) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const containerId  = `tv_${symbol.replace(/[^a-zA-Z0-9]/g, "_")}`;
 
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Clear previous widget
     containerRef.current.innerHTML = `<div id="${containerId}" style="height:100%;width:100%;"></div>`;
 
     const script = document.createElement("script");
@@ -25,10 +25,10 @@ const TradingViewWidget = memo(({ symbol, exchange }: Props) => {
         symbol: exchange ? `${exchange}:${symbol}` : symbol,
         interval: "W",
         timezone: "Etc/UTC",
-        theme: "light",
+        theme: isDark ? "dark" : "light",
         style: "1",
         locale: "he",
-        toolbar_bg: "#ffffff",
+        toolbar_bg: isDark ? "#131722" : "#ffffff",
         enable_publishing: false,
         hide_top_toolbar: false,
         hide_legend: false,
