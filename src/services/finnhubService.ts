@@ -448,37 +448,41 @@ export async function fetchFinnhubHistorical(
     const annualPrices = await fetchAnnualPrices(t, 10);
 
     if (annualPrices.length > 0) {
-      const priceMap  = new Map(annualPrices.map((p) => [p.date, p.value]));
-      const sharesMap = new Map(sharesDiluted.map((p) => [p.date, p.value]));
-      const mktCap    = (date: string): number | null => {
-        const price  = priceMap.get(date);
-        const shares = sharesMap.get(date);
+      // priceMap keys are year strings ("2023"); report dates are "2023-12-31" — normalise with yr()
+      const yr = (d: string) => d.length === 4 ? d : d.substring(0, 4);
+      const priceMap  = new Map(annualPrices.map((p) => [p.date, p.value]));          // "2023" → price
+      const sharesMap = new Map(sharesDiluted                                          // "2023" → shares
+        .filter((p) => p.value !== null)
+        .map((p) => [yr(p.date), p.value]));
+      const mktCap = (d: string): number | null => {
+        const price  = priceMap.get(yr(d));
+        const shares = sharesMap.get(yr(d));
         return price && shares ? price * shares : null;
       };
 
       if (peHistorical.length === 0) {
         peHistorical = eps
-          .filter((e) => e.value !== null && e.value !== 0 && priceMap.has(e.date))
-          .map((e) => ({ date: e.date, value: +(priceMap.get(e.date)! / e.value!).toFixed(1) }));
+          .filter((e) => e.value !== null && e.value !== 0 && priceMap.has(yr(e.date)))
+          .map((e) => ({ date: yr(e.date), value: +(priceMap.get(yr(e.date))! / e.value!).toFixed(1) }));
       }
 
       // P/FCF always computed (not in Finnhub series)
       pfcfHistorical = freeCashFlow
-        .filter((r) => r.value !== null && r.value > 0 && priceMap.has(r.date) && sharesMap.has(r.date))
-        .map((r) => { const mc = mktCap(r.date); return mc ? { date: r.date, value: +(mc / r.value!).toFixed(1) } : null; })
+        .filter((r) => r.value !== null && r.value > 0 && mktCap(r.date) !== null)
+        .map((r) => { const mc = mktCap(r.date); return mc ? { date: yr(r.date), value: +(mc / r.value!).toFixed(1) } : null; })
         .filter((p): p is SeriesPoint => p !== null);
 
       if (psHistorical.length === 0) {
         psHistorical = revenues
-          .filter((r) => r.value !== null && r.value !== 0 && priceMap.has(r.date) && sharesMap.has(r.date))
-          .map((r) => { const mc = mktCap(r.date); return mc ? { date: r.date, value: +(mc / r.value!).toFixed(1) } : null; })
+          .filter((r) => r.value !== null && r.value > 0 && mktCap(r.date) !== null)
+          .map((r) => { const mc = mktCap(r.date); return mc ? { date: yr(r.date), value: +(mc / r.value!).toFixed(1) } : null; })
           .filter((p): p is SeriesPoint => p !== null);
       }
 
       if (pbHistorical.length === 0) {
         pbHistorical = totalEquity
-          .filter((r) => r.value !== null && r.value > 0 && priceMap.has(r.date) && sharesMap.has(r.date))
-          .map((r) => { const mc = mktCap(r.date); return mc ? { date: r.date, value: +(mc / r.value!).toFixed(1) } : null; })
+          .filter((r) => r.value !== null && r.value > 0 && mktCap(r.date) !== null)
+          .map((r) => { const mc = mktCap(r.date); return mc ? { date: yr(r.date), value: +(mc / r.value!).toFixed(1) } : null; })
           .filter((p): p is SeriesPoint => p !== null);
       }
 
