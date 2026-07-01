@@ -91,21 +91,21 @@ function Gauge({ score }: { score: number }) {
     y: cy  + radius * Math.sin(toRad(deg)),
   });
 
-  // score 0..100 → angle 180..0 (left to right, upper semicircle)
-  const scoreToAngle = (s: number) => 180 - s * 1.8;
+  // score 0..100 → angle 180..360 (left → top → right, upper semicircle)
+  // In SVG y-axis is flipped, so 270° = visual top
+  const scoreToAngle = (s: number) => 180 + s * 1.8;
 
-  // Donut arc path for a zone
+  // Donut arc path for a zone (clockwise = sweep 1 = goes upward in SVG)
   const arcPath = (fromScore: number, toScore: number) => {
     const a1 = scoreToAngle(fromScore);
     const a2 = scoreToAngle(toScore);
     const o1 = polar(a1, R);   const i1 = polar(a1, r_inner);
     const o2 = polar(a2, R);   const i2 = polar(a2, r_inner);
-    const large = Math.abs(a1 - a2) > 180 ? 1 : 0;
     return [
       `M ${o1.x} ${o1.y}`,
-      `A ${R} ${R} 0 ${large} 0 ${o2.x} ${o2.y}`,
+      `A ${R} ${R} 0 0 1 ${o2.x} ${o2.y}`,   // outer arc CW (upward)
       `L ${i2.x} ${i2.y}`,
-      `A ${r_inner} ${r_inner} 0 ${large} 1 ${i1.x} ${i1.y}`,
+      `A ${r_inner} ${r_inner} 0 0 0 ${i1.x} ${i1.y}`, // inner arc CCW
       "Z",
     ].join(" ");
   };
