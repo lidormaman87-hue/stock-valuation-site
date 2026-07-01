@@ -1,34 +1,32 @@
 /**
- * FearGreedGauge — CNN Fear & Greed Index dashboard.
- * Data: production.dataviz.cnn.io/index/fearandgreed/graphdata
+ * FearGreedGauge — CNN Fear & Greed Index, styled to match FinHacker gauge.
+ * Data: production.dataviz.cnn.io/index/fearandgreed/graphdata (+ proxies)
  * Cache: 30 minutes.
  */
-import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Loader2, Activity } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { RefreshCw } from "lucide-react";
 
-const CACHE_KEY = "fgi_cnn_v1";
-const CACHE_TTL = 30 * 60 * 1000; // 30 min
+const CACHE_KEY = "fgi_cnn_v2";
+const CACHE_TTL = 30 * 60 * 1000;
 
 /* ── Types ───────────────────────────────────────────────── */
 interface FGIData {
-  score:          number;
-  rating:         string;
-  prevClose:      number | null;
-  prev1Week:      number | null;
-  prev1Month:     number | null;
-  prev1Year:      number | null;
+  score:      number;
+  rating:     string;
+  timestamp?: string;
 }
 
 /* ── Fetch ───────────────────────────────────────────────── */
-async function fetchFGI(): Promise<FGIData | null> {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    if (raw) {
-      const { ts, data } = JSON.parse(raw);
-      if (Date.now() - ts < CACHE_TTL) return data;
-    }
-  } catch {}
+async function fetchFGI(bust = false): Promise<FGIData | null> {
+  if (!bust) {
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (raw) {
+        const { ts, data } = JSON.parse(raw);
+        if (Date.now() - ts < CACHE_TTL) return data;
+      }
+    } catch {}
+  }
 
   const url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata";
   const proxies = [
@@ -45,183 +43,220 @@ async function fetchFGI(): Promise<FGIData | null> {
       if (!text.trimStart().startsWith("{")) continue;
       const json = JSON.parse(text);
       const fg   = json?.fear_and_greed;
-      if (!fg) continue;
-
-      const n = (v: any) => {
-        const x = parseFloat(String(v ?? ""));
-        return isFinite(x) ? +x.toFixed(1) : null;
-      };
+      if (fg == null) continue;
 
       const data: FGIData = {
-        score:      +(Number(fg.score)).toFixed(1),
-        rating:     fg.rating ?? "",
-        prevClose:  n(fg.previous_close),
-        prev1Week:  n(fg.previous_1_week),
-        prev1Month: n(fg.previous_1_month),
-        prev1Year:  n(fg.previous_1_year),
+        score:     +(Number(fg.score)).toFixed(1),
+        rating:    fg.rating ?? "",
+        timestamp: fg.timestamp,
       };
-
       try { localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data })); } catch {}
       return data;
-    } catch { /* try next */ }
+    } catch {}
   }
   return null;
 }
 
-/* ── Color helpers ───────────────────────────────────────── */
-const scoreColor = (s: number) =>
-  s < 25  ? "#ef4444" :  // Extreme Fear
-  s < 45  ? "#f97316" :  // Fear
-  s < 56  ? "#eab308" :  // Neutral
-  s < 75  ? "#84cc16" :  // Greed
-              "#22c55e";  // Extreme Greed
+/* ── Helpers ─────────────────────────────────────────────── */
+const ZONES = [
+  { label: "Extreme\nFear",  from: 0,   to: 20,  color: "#7b1c1c" },
+  { label: "Fear",           from: 20,  to: 45,  color: "#c0622b" },
+  { label: "Neutral",        from: 45,  to: 55,  color: "#9a9a9a" },
+  { label: "Greed",          from: 55,  to: 80,  color: "#4e9e6e" },
+  { label: "Extreme\nGreed", from: 80,  to: 100, color: "#2d6e4e" },
+];
 
-const ratingHe = (r: string) => {
-  const m: Record<string, string> = {
-    "Extreme Fear": "פחד קיצוני",
-    "Fear":         "פחד",
-    "Neutral":      "ניטרלי",
-    "Greed":        "חמדנות",
-    "Extreme Greed":"חמדנות קיצונית",
-  };
-  return m[r] ?? r;
+const scoreColor = (s: number) => {
+  for (const z of ZONES) if (s >= z.from && s <= z.to) return z.color;
+  return ZONES[ZONES.length - 1].color;
 };
+
+const ratingHe = (r: string) => ({
+  "Extreme Fear":  "פחד קיצוני",
+  "Fear":          "פחד",
+  "Neutral":       "ניטרלי",
+  "Greed":         "חמדנות",
+  "Extreme Greed": "חמדנות קיצונית",
+}[r] ?? r);
 
 /* ── SVG Gauge ───────────────────────────────────────────── */
 function Gauge({ score }: { score: number }) {
-  const cx = 110, cy = 100, r = 80;
-  // Arc: 180° semi-circle, left = 0, right = 100
+  const W = 340, H = 210;
+  const cx = W / 2, cy = H - 40;
+  const R = 120, r_inner = R - 28;
+
   const toRad = (deg: number) => (deg * Math.PI) / 180;
-  const pointOnArc = (deg: number) => ({
-    x: cx + r * Math.cos(toRad(deg)),
-    y: cy + r * Math.sin(toRad(deg)),
+  const polar = (deg: number, radius = R) => ({
+    x: cx + radius * Math.cos(toRad(deg)),
+    y: cy  + radius * Math.sin(toRad(deg)),
   });
 
-  // Score 0→100 maps to angle 180°→0° (left to right)
-  const needleAngle = 180 - score * 1.8;
-  const needle = pointOnArc(needleAngle);
-  const color  = scoreColor(score);
+  // score 0..100 → angle 180..0 (left to right, upper semicircle)
+  const scoreToAngle = (s: number) => 180 - s * 1.8;
 
-  // Gradient arc segments
-  const segments = [
-    { from: 180, to: 144, color: "#ef4444" },  // 0–20 Extreme Fear
-    { from: 144, to: 108, color: "#f97316" },  // 20–40 Fear
-    { from: 108, to:  90, color: "#eab308" },  // 40–50 Neutral
-    { from:  90, to:  36, color: "#84cc16" },  // 50–70 Greed
-    { from:  36, to:   0, color: "#22c55e" },  // 70–100 Extreme Greed
-  ];
-
-  const arc = (fromDeg: number, toDeg: number) => {
-    const s = pointOnArc(fromDeg);
-    const e = pointOnArc(toDeg);
-    const large = Math.abs(fromDeg - toDeg) > 180 ? 1 : 0;
-    // going counter-clockwise (sweep=0)
-    return `M ${s.x} ${s.y} A ${r} ${r} 0 ${large} 0 ${e.x} ${e.y}`;
+  // Donut arc path for a zone
+  const arcPath = (fromScore: number, toScore: number) => {
+    const a1 = scoreToAngle(fromScore);
+    const a2 = scoreToAngle(toScore);
+    const o1 = polar(a1, R);   const i1 = polar(a1, r_inner);
+    const o2 = polar(a2, R);   const i2 = polar(a2, r_inner);
+    const large = Math.abs(a1 - a2) > 180 ? 1 : 0;
+    return [
+      `M ${o1.x} ${o1.y}`,
+      `A ${R} ${R} 0 ${large} 0 ${o2.x} ${o2.y}`,
+      `L ${i2.x} ${i2.y}`,
+      `A ${r_inner} ${r_inner} 0 ${large} 1 ${i1.x} ${i1.y}`,
+      "Z",
+    ].join(" ");
   };
 
-  return (
-    <svg viewBox="0 0 220 115" className="w-full max-w-[240px] mx-auto">
-      {/* Track */}
-      <path d={`M ${pointOnArc(180).x} ${pointOnArc(180).y} A ${r} ${r} 0 0 1 ${pointOnArc(0).x} ${pointOnArc(0).y}`}
-        fill="none" stroke="currentColor" strokeOpacity={0.1} strokeWidth={14} strokeLinecap="round" />
+  // Needle
+  const needleAngle = scoreToAngle(score);
+  const needleTip   = polar(needleAngle, R - 6);
+  const needleBase  = polar(needleAngle + 90, 6);
+  const needleBase2 = polar(needleAngle - 90, 6);
 
-      {/* Colored segments */}
-      {segments.map((seg, i) => (
-        <path key={i} d={arc(seg.from, seg.to)}
-          fill="none" stroke={seg.color} strokeWidth={12} strokeLinecap="butt" opacity={0.85} />
+  // Zone label positions (midpoint of each arc, just outside)
+  const labelR = R + 18;
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full">
+      {/* Background */}
+      <rect x={4} y={4} width={W - 8} height={H - 8} rx={14}
+        fill="hsl(var(--secondary)/0.5)" stroke="hsl(var(--border))" strokeWidth={1} />
+
+      {/* Arc segments */}
+      {ZONES.map((z) => (
+        <path key={z.label} d={arcPath(z.from, z.to)} fill={z.color} opacity={0.92} />
       ))}
 
-      {/* Needle */}
-      <line
-        x1={cx} y1={cy}
-        x2={needle.x} y2={needle.y}
-        stroke={color} strokeWidth={2.5} strokeLinecap="round"
-      />
-      <circle cx={cx} cy={cy} r={5} fill={color} />
+      {/* Gap lines between segments */}
+      {ZONES.slice(0, -1).map((z) => {
+        const ang = scoreToAngle(z.to);
+        const o = polar(ang, R + 1);
+        const i = polar(ang, r_inner - 1);
+        return (
+          <line key={z.to}
+            x1={o.x} y1={o.y} x2={i.x} y2={i.y}
+            stroke="hsl(var(--secondary)/0.8)" strokeWidth={2}
+          />
+        );
+      })}
 
-      {/* Score */}
-      <text x={cx} y={cy + 22} textAnchor="middle"
-        fontSize={22} fontWeight="bold" fill={color}>
-        {score.toFixed(0)}
-      </text>
+      {/* Zone labels */}
+      {ZONES.map((z) => {
+        const midScore = (z.from + z.to) / 2;
+        const ang = scoreToAngle(midScore);
+        const pos = polar(ang, labelR + (Math.abs(ang - 90) > 50 ? 6 : 0));
+        const lines = z.label.split("\n");
+        return (
+          <text key={z.label} x={pos.x} y={pos.y + (lines.length > 1 ? -6 : 3)}
+            textAnchor="middle" fontSize={9} fill="hsl(var(--muted-foreground))" fontWeight="500">
+            {lines.map((l, i) => (
+              <tspan key={i} x={pos.x} dy={i === 0 ? 0 : 12}>{l}</tspan>
+            ))}
+          </text>
+        );
+      })}
+
+      {/* Needle */}
+      <polygon
+        points={`${needleTip.x},${needleTip.y} ${needleBase.x},${needleBase.y} ${needleBase2.x},${needleBase2.y}`}
+        fill="hsl(var(--muted-foreground)/0.6)"
+      />
+      {/* Needle pivot */}
+      <circle cx={cx} cy={cy} r={9} fill="hsl(var(--muted-foreground)/0.7)" />
+      <circle cx={cx} cy={cy} r={5} fill="hsl(var(--card))" />
     </svg>
   );
 }
 
-/* ── Comparison pill ─────────────────────────────────────── */
-const Pill = ({ label, score, current }: { label: string; score: number | null; current: number }) => {
-  if (score === null) return null;
-  const diff  = +(current - score).toFixed(1);
-  const up    = diff > 0;
-  const color = scoreColor(score);
-  return (
-    <div className="flex flex-col items-center gap-0.5">
-      <span className="text-[10px] text-muted-foreground">{label}</span>
-      <span className="text-sm font-bold tabular-nums" style={{ color }}>{score.toFixed(0)}</span>
-      <span className={`text-[10px] font-medium ${up ? "text-emerald-500" : "text-red-400"}`}>
-        {up ? "▲" : "▼"}{Math.abs(diff)}
-      </span>
-    </div>
-  );
-};
-
 /* ── Component ───────────────────────────────────────────── */
 export function FearGreedGauge() {
   const [data,    setData]    = useState<FGIData | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(false);
+  const [updated, setUpdated] = useState<Date | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(async (bust = false) => {
     setLoading(true);
-    fetchFGI()
-      .then((d) => { setData(d); if (!d) setError(true); })
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
+    setError(false);
+    try {
+      const d = await fetchFGI(bust);
+      if (d) { setData(d); setUpdated(new Date()); }
+      else setError(true);
+    } catch { setError(true); }
+    finally { setLoading(false); }
   }, []);
 
+  useEffect(() => { load(); }, [load]);
+
+  const color = data ? scoreColor(data.score) : "#9a9a9a";
+
   return (
-    <Card className="card-elegant">
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Activity className="h-4 w-4 text-primary" />
-          מדד פחד וחמדנות
-        </CardTitle>
-        <p className="text-xs text-muted-foreground">מקור: CNN Fear &amp; Greed Index</p>
-      </CardHeader>
+    <div className="card-elegant p-4 space-y-3">
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h3 className="font-bold text-base">Fear &amp; Greed Index</h3>
+          <p className="text-xs text-muted-foreground">Live market sentiment</p>
+        </div>
+        <button
+          onClick={() => load(true)}
+          disabled={loading}
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground border border-border rounded-xl px-3 py-1.5 transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className={`h-3 w-3 ${loading ? "animate-spin" : ""}`} />
+          Refresh
+        </button>
+      </div>
 
-      <CardContent>
-        {loading && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
-            <Loader2 className="h-4 w-4 animate-spin" /> טוען...
+      {/* Score + Label row */}
+      {data && (
+        <div className="flex items-center gap-4">
+          {/* Circle score */}
+          <div className="flex-shrink-0 w-16 h-16 rounded-full border-4 flex items-center justify-center"
+            style={{ borderColor: color, background: `${color}18` }}>
+            <span className="text-xl font-black" style={{ color }}>
+              {data.score.toFixed(0)}
+            </span>
           </div>
-        )}
-
-        {error && !loading && (
-          <p className="text-sm text-muted-foreground py-2 text-center">לא ניתן לטעון נתונים</p>
-        )}
-
-        {data && !loading && (
-          <div className="space-y-3">
-            {/* Gauge */}
-            <Gauge score={data.score} />
-
-            {/* Rating label */}
-            <div className="text-center -mt-2">
-              <span className="text-sm font-semibold" style={{ color: scoreColor(data.score) }}>
-                {ratingHe(data.rating)}
-              </span>
-            </div>
-
-            {/* Comparisons */}
-            <div className="grid grid-cols-4 gap-1 pt-2 border-t border-border/30">
-              <Pill label="אתמול"       score={data.prevClose}  current={data.score} />
-              <Pill label="שבוע שעבר"   score={data.prev1Week}  current={data.score} />
-              <Pill label="חודש שעבר"   score={data.prev1Month} current={data.score} />
-              <Pill label="שנה שעברה"   score={data.prev1Year}  current={data.score} />
-            </div>
+          {/* Label */}
+          <div>
+            <p className="text-2xl font-bold" style={{ color }}>{ratingHe(data.rating)}</p>
+            <p className="text-xs text-muted-foreground">{data.rating}</p>
           </div>
-        )}
-      </CardContent>
-    </Card>
+        </div>
+      )}
+
+      {/* Error state */}
+      {error && !loading && (
+        <p className="text-sm text-muted-foreground text-center py-4">לא ניתן לטעון נתונים</p>
+      )}
+
+      {/* Loading placeholder */}
+      {loading && !data && (
+        <div className="space-y-2 animate-pulse py-2">
+          <div className="h-16 bg-secondary rounded-xl" />
+          <div className="h-36 bg-secondary rounded-xl" />
+        </div>
+      )}
+
+      {/* Gauge */}
+      {data && <Gauge score={data.score} />}
+
+      {/* Footer */}
+      {updated && (
+        <div className="flex justify-between text-xs text-muted-foreground pt-1 border-t border-border/30">
+          <span>Updated</span>
+          <span>{updated.toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" })}</span>
+        </div>
+      )}
+      <div className="flex justify-between text-xs text-muted-foreground -mt-1">
+        <span>Source</span>
+        <a href="https://edition.cnn.com/markets/fear-and-greed" target="_blank" rel="noopener noreferrer"
+          className="text-primary hover:underline">CNN Fear &amp; Greed</a>
+      </div>
+    </div>
   );
 }
