@@ -25,6 +25,7 @@ import {
 import { fetchStockData } from "@/services/stockDataService";
 import { setApiKey, getApiKey, fetchHistoricalData, type HistoricalData } from "@/services/alphaVantageService";
 import { setFinnhubKey, getFinnhubKey, fetchFinnhubHistorical, type FinnhubHistoricalData } from "@/services/finnhubService";
+import { fetchMacrotrends, type MacrotrendsHistorical } from "@/services/macrotrendsService";
 import type { ValuationCharts } from "@/components/FinancialDashboardSection";
 import { FinancialDashboardSection } from "@/components/FinancialDashboardSection";
 import TradingViewWidget from "@/components/TradingViewWidget";
@@ -167,6 +168,7 @@ const Index = () => {
   const [ticker, setTicker] = useState("AAPL");
   const [loadingTicker, setLoadingTicker] = useState(false);
   const [historicalData, setHistoricalData] = useState<HistoricalData | FinnhubHistoricalData | null>(null);
+  const [macrotrendsData, setMacrotrendsData] = useState<MacrotrendsHistorical | null>(null);
   const [loadingHistorical, setLoadingHistorical] = useState(false);
   const [loadedStockData, setLoadedStockData] = useState<import("@/services/stockDataService").StockData | null>(null);
 
@@ -193,6 +195,7 @@ const Index = () => {
       return;
     }
     setLoadingTicker(true);
+    setMacrotrendsData(null); // reset on new ticker
     const loadingId = toast.loading(`טוען נתונים עבור ${t}...`);
     try {
       const data = await fetchStockData(t);
@@ -217,6 +220,11 @@ const Index = () => {
         // Fetch historical data — try Finnhub first (unlimited), fallback to Alpha Vantage
         setLoadingHistorical(true);
         const loadHistorical = async () => {
+          // MacroTrends: fetch valuation ratios in parallel (best source)
+          fetchMacrotrends(t, data.companyName ?? t)
+            .then((mt) => { if (mt.pe.length > 0 || mt.ps.length > 0) setMacrotrendsData(mt); })
+            .catch(() => {});
+
           // Try Finnhub
           if (getFinnhubKey()) {
             try {
@@ -915,7 +923,15 @@ const Index = () => {
               <FinancialDashboardSection
                 data={historicalData}
                 valuationCharts={
-                  historicalData && "ratios" in historicalData && "peHistorical" in (historicalData as FinnhubHistoricalData).ratios
+                  // Prefer MacroTrends (direct ratios, more accurate) over Finnhub
+                  macrotrendsData && macrotrendsData.pe.length > 0
+                    ? {
+                        peHistorical:   macrotrendsData.pe,
+                        pfcfHistorical: macrotrendsData.pfcf,
+                        psHistorical:   macrotrendsData.ps,
+                        pbHistorical:   macrotrendsData.pb,
+                      } as ValuationCharts
+                    : historicalData && "ratios" in historicalData && "peHistorical" in (historicalData as FinnhubHistoricalData).ratios
                     ? {
                         peHistorical:   (historicalData as FinnhubHistoricalData).ratios.peHistorical,
                         pfcfHistorical: (historicalData as FinnhubHistoricalData).ratios.pfcfHistorical,
