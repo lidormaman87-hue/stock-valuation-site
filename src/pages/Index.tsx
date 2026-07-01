@@ -922,6 +922,7 @@ const Index = () => {
             <div className="mt-2">
               <FinancialDashboardSection
                 data={historicalData}
+                ticker={ticker.trim().toUpperCase()}
                 valuationCharts={
                   // Prefer MacroTrends (direct ratios, more accurate) over Finnhub
                   macrotrendsData && macrotrendsData.pe.length > 0

@@ -3,7 +3,7 @@
  * Renders Income / Balance / Cash-Flow charts in a single scrollable page,
  * matching the reference design: grouped bars, section headers, legends, expand modal.
  */
-import { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip,
@@ -14,6 +14,11 @@ import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Maximize2 } from "lucide-react";
 import type { HistoricalData, SeriesPoint } from "@/services/alphaVantageService";
 import type { FinnhubHistoricalData } from "@/services/finnhubService";
+import { AiScoreBadge } from "@/components/AiScoreBadge";
+import {
+  fetchGrokScore, type GrokScore, type SectionKey,
+  buildIncomeSummary, buildBalanceSummary, buildCashflowSummary, buildValuationSummary,
+} from "@/services/grokService";
 
 // ── Colors ────────────────────────────────────────────────
 const C = {
@@ -177,10 +182,21 @@ const GroupedChart = ({ title, subtitle, data, series, formatter }: GroupedChart
 };
 
 // ── Section header ────────────────────────────────────────
-const SectionHeader = ({ title, subtitle }: { title: string; subtitle: string }) => (
-  <div className="mb-4">
-    <h2 className="text-xl font-bold text-foreground">{title}</h2>
-    <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>
+const SectionHeader = ({
+  title,
+  subtitle,
+  badge,
+}: {
+  title: string;
+  subtitle: string;
+  badge?: React.ReactNode;
+}) => (
+  <div className="mb-4 flex items-start justify-between gap-3">
+    <div>
+      <h2 className="text-xl font-bold text-foreground">{title}</h2>
+      <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>
+    </div>
+    {badge && <div className="shrink-0 mt-0.5">{badge}</div>}
   </div>
 );
 
@@ -451,13 +467,73 @@ export function FinancialDashboardSection({
   data,
   valuationCharts,
   onPeriodChange,
+  ticker,
 }: {
   data: HistoricalData;
   valuationCharts?: ValuationCharts;
   onPeriodChange?: (p: Period) => void;
+  ticker?: string;
 }) {
   const [range,  setRange]  = useState<Range>("ALL");
   const [period, setPeriod] = useState<Period>("annual");
+
+  // ── Grok AI scores ────────────────────────────────────────
+  type ScoreState = GrokScore | null | "loading";
+  const [scores, setScores] = useState<Record<SectionKey, ScoreState>>({
+    income:    null,
+    balance:   null,
+    cashflow:  null,
+    valuation: null,
+  });
+
+  useEffect(() => {
+    if (!ticker) return;
+
+    const fetchScore = async (section: SectionKey, summary: string) => {
+      setScores((prev) => ({ ...prev, [section]: "loading" }));
+      const result = await fetchGrokScore(ticker, section, summary);
+      setScores((prev) => ({ ...prev, [section]: result }));
+    };
+
+    // Build summaries from raw (unfiltered) data
+    const noTTM = (s: SeriesPoint[]) => s.filter((p) => p.date !== "TTM");
+
+    fetchScore("income", buildIncomeSummary({
+      revenues:        noTTM(data.income.revenues),
+      grossProfit:     noTTM(data.income.grossProfit),
+      operatingIncome: noTTM(data.income.operatingIncome),
+      netIncome:       noTTM(data.income.netIncome),
+      eps:             noTTM(data.income.eps),
+    }));
+
+    fetchScore("balance", buildBalanceSummary({
+      totalAssets:             noTTM(data.balance.totalAssets),
+      totalLiabilities:        noTTM(data.balance.totalLiabilities),
+      totalEquity:             noTTM(data.balance.totalEquity),
+      totalDebt:               noTTM(data.balance.totalDebt),
+      cashAndShortTerm:        noTTM(data.balance.cashAndShortTerm),
+      totalCurrentAssets:      noTTM(data.balance.totalCurrentAssets),
+      totalCurrentLiabilities: noTTM(data.balance.totalCurrentLiabilities),
+    }));
+
+    fetchScore("cashflow", buildCashflowSummary({
+      operatingCashFlow:      noTTM(data.cashflow.operatingCashFlow),
+      freeCashFlow:           noTTM(data.cashflow.freeCashFlow),
+      capitalExpenditures:    noTTM(data.cashflow.capitalExpenditures),
+      stockBasedCompensation: noTTM(data.cashflow.stockBasedCompensation),
+      netIncome:              noTTM(data.cashflow.netIncome),
+    }));
+
+    if (valuationCharts) {
+      fetchScore("valuation", buildValuationSummary({
+        pe:   valuationCharts.peHistorical.map((p) => ({ date: p.date, value: p.value })),
+        ps:   valuationCharts.psHistorical.map((p) => ({ date: p.date, value: p.value })),
+        pb:   valuationCharts.pbHistorical.map((p) => ({ date: p.date, value: p.value })),
+        pfcf: valuationCharts.pfcfHistorical.map((p) => ({ date: p.date, value: p.value })),
+      }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticker]);
 
   // Filter TTM out of every series before displaying
   const noTTM = (s: SeriesPoint[]) => s.filter((p) => p.date !== "TTM");
@@ -532,6 +608,7 @@ export function FinancialDashboardSection({
         <SectionHeader
           title="Income Statement Analysis"
           subtitle="Revenue, profitability, and share statistics over time"
+          badge={<AiScoreBadge score={scores.income} />}
         />
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <RevenueGrowthChart revenues={income.revenues} />
@@ -587,6 +664,7 @@ export function FinancialDashboardSection({
         <SectionHeader
           title="Balance Sheet Analysis"
           subtitle="Financial position breakdown - assets, liabilities, and equity structure"
+          badge={<AiScoreBadge score={scores.balance} />}
         />
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <GroupedChart
@@ -626,6 +704,7 @@ export function FinancialDashboardSection({
         <SectionHeader
           title="Cash Flow Analysis"
           subtitle="Cash generation, capital efficiency, and earnings quality assessment"
+          badge={<AiScoreBadge score={scores.cashflow} />}
         />
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <GroupedChart
@@ -657,6 +736,7 @@ export function FinancialDashboardSection({
           <SectionHeader
             title="Valuation Ratios History"
             subtitle="Historical price multiples based on annual average stock price (annual data only)"
+            badge={<AiScoreBadge score={scores.valuation} />}
           />
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <SimpleChart
