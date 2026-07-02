@@ -57,10 +57,11 @@ export default async function handler(req: any, res: any) {
   if (req.method === "OPTIONS") return res.status(200).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
-  const { ticker, companyName, historicalSummary } = req.body ?? {};
+  const { ticker, companyName, historicalSummary, apiKey: clientKey } = req.body ?? {};
   if (!ticker) return res.status(400).json({ error: "ticker required" });
 
-  const apiKey = process.env.GROK_API_KEY;
+  // Accept key from env var (server) OR from client body (user's own key)
+  const apiKey = process.env.GROK_API_KEY ?? clientKey ?? null;
   if (!apiKey) return res.status(500).json({ error: "GROK_API_KEY not configured" });
 
   const baseYear = new Date().getFullYear() - 1;

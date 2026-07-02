@@ -3,6 +3,7 @@
  * for the Grok AI financial forecast feature.
  */
 import type { FinnhubHistoricalData } from "@/services/finnhubService";
+import { getGrokKey } from "@/services/grokService";
 
 /* ── Types ───────────────────────────────────────────────── */
 export interface ForecastRow {
@@ -125,7 +126,7 @@ export async function fetchGrokForecast(
   const res = await fetch("/api/grok-forecast", {
     method:  "POST",
     headers: { "Content-Type": "application/json" },
-    body:    JSON.stringify({ ticker, companyName, historicalSummary }),
+    body:    JSON.stringify({ ticker, companyName, historicalSummary, apiKey: getGrokKey() }),
     signal:  AbortSignal.timeout(30_000),
   });
 

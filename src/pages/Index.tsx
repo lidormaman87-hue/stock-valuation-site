@@ -25,6 +25,7 @@ import {
 import { fetchStockData } from "@/services/stockDataService";
 import { setApiKey, getApiKey, fetchHistoricalData, type HistoricalData } from "@/services/alphaVantageService";
 import { setFinnhubKey, getFinnhubKey, fetchFinnhubHistorical, type FinnhubHistoricalData } from "@/services/finnhubService";
+import { getGrokKey, setGrokKey } from "@/services/grokService";
 import { fetchMacrotrends, type MacrotrendsHistorical } from "@/services/macrotrendsService";
 import type { ValuationCharts } from "@/components/FinancialDashboardSection";
 import { FinancialDashboardSection } from "@/components/FinancialDashboardSection";
@@ -167,6 +168,7 @@ const Index = () => {
   const [autoUpdate, setAutoUpdate] = useState(true);
   const [trigger, setTrigger] = useState(0);
   const [ticker, setTicker] = useState("AAPL");
+  const [grokKey, setGrokKeyState] = useState(() => getGrokKey() ?? "");
   const [loadingTicker, setLoadingTicker] = useState(false);
   const [historicalData, setHistoricalData] = useState<HistoricalData | FinnhubHistoricalData | null>(null);
   const [macrotrendsData, setMacrotrendsData] = useState<MacrotrendsHistorical | null>(null);
@@ -540,6 +542,32 @@ const Index = () => {
                 <p className="text-xs text-muted-foreground basis-full">
                   הנתונים נמשכים מ-Finviz וניתנים לעריכה ידנית בטופס. שמירה מתבצעת רק בלחיצה על "שמור מניה".
                 </p>
+                {/* Grok API Key */}
+                <div className="flex items-center gap-2 basis-full pt-1 border-t border-border/40">
+                  <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">🔑 Grok API Key</span>
+                  <Input
+                    type="password"
+                    value={grokKey}
+                    onChange={(e) => {
+                      setGrokKeyState(e.target.value);
+                      setGrokKey(e.target.value.trim());
+                    }}
+                    placeholder="xai-..."
+                    className="flex-1 text-xs h-8 font-mono"
+                    dir="ltr"
+                  />
+                  {grokKey && (
+                    <span className="text-[10px] text-green-600 whitespace-nowrap">✓ מוגדר</span>
+                  )}
+                  <a
+                    href="https://console.x.ai"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] text-primary hover:underline whitespace-nowrap"
+                  >
+                    קבל מפתח
+                  </a>
+                </div>
               </div>
             </CardContent>
           </Card>
