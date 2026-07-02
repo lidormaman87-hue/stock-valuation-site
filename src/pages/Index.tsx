@@ -990,6 +990,10 @@ const Index = () => {
                         pfcfHistorical: (historicalData as FinnhubHistoricalData).ratios.pfcfHistorical,
                         psHistorical:   (historicalData as FinnhubHistoricalData).ratios.psHistorical,
                         pbHistorical:   (historicalData as FinnhubHistoricalData).ratios.pbHistorical,
+                        peQuarterly:    (historicalData as FinnhubHistoricalData).ratios.peQuarterly,
+                        psQuarterly:    (historicalData as FinnhubHistoricalData).ratios.psQuarterly,
+                        pbQuarterly:    (historicalData as FinnhubHistoricalData).ratios.pbQuarterly,
+                        pfcfQuarterly:  (historicalData as FinnhubHistoricalData).ratios.pfcfQuarterly,
                       } as ValuationCharts
                     : undefined
                 }

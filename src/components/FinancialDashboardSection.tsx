@@ -84,26 +84,45 @@ interface SimpleChartProps {
   color: string;
   formatter?: (v: number) => string;
   pct?: boolean;
+  type?: "bar" | "line";
 }
 
-const SimpleChart = ({ title, data, color, formatter, pct }: SimpleChartProps) => {
+const SimpleChart = ({ title, data, color, formatter, pct, type = "bar" }: SimpleChartProps) => {
   const [expanded, setExpanded] = useState(false);
   const fmt = formatter ?? (pct ? (v: number) => `${v?.toFixed(1)}%` : fmtShort);
   const valid = data.filter((p) => p.value !== null);
   const hasData = valid.length > 0;
 
-  const chart = (height: number) => (
-    <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={valid} barCategoryGap="35%">
-        <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#f0f0f0" />
-        <XAxis dataKey="date" tick={{ fontSize: 11, fontFamily: "Heebo" }} axisLine={false} tickLine={false} />
-        <YAxis tickFormatter={fmt} tick={{ fontSize: 11, fontFamily: "Heebo" }} axisLine={false} tickLine={false} width={pct ? 45 : 55} />
-        <Tooltip contentStyle={TooltipStyle} formatter={(v: number) => [fmt(v), title]} />
-        {pct && <ReferenceLine y={0} stroke="#d1d5db" />}
-        <Bar dataKey="value" fill={color} radius={[4, 4, 0, 0]} name={title} />
-      </BarChart>
-    </ResponsiveContainer>
-  );
+  const chart = (height: number) => {
+    if (type === "line") {
+      return (
+        <ResponsiveContainer width="100%" height={height}>
+          <LineChart data={valid} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
+            <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#f0f0f0" />
+            <XAxis dataKey="date" tick={{ fontSize: 10, fontFamily: "Heebo" }} axisLine={false} tickLine={false}
+              interval={Math.max(0, Math.floor(valid.length / 6) - 1)} />
+            <YAxis tickFormatter={fmt} tick={{ fontSize: 11, fontFamily: "Heebo" }} axisLine={false} tickLine={false} width={55} />
+            <Tooltip contentStyle={TooltipStyle} formatter={(v: number) => [fmt(v), title]} />
+            <ReferenceLine y={0} stroke="#d1d5db" />
+            <Line dataKey="value" stroke={color} strokeWidth={2.5} dot={false} name={title}
+              activeDot={{ r: 4, fill: color }} />
+          </LineChart>
+        </ResponsiveContainer>
+      );
+    }
+    return (
+      <ResponsiveContainer width="100%" height={height}>
+        <BarChart data={valid} barCategoryGap="35%">
+          <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis dataKey="date" tick={{ fontSize: 11, fontFamily: "Heebo" }} axisLine={false} tickLine={false} />
+          <YAxis tickFormatter={fmt} tick={{ fontSize: 11, fontFamily: "Heebo" }} axisLine={false} tickLine={false} width={pct ? 45 : 55} />
+          <Tooltip contentStyle={TooltipStyle} formatter={(v: number) => [fmt(v), title]} />
+          {pct && <ReferenceLine y={0} stroke="#d1d5db" />}
+          <Bar dataKey="value" fill={color} radius={[4, 4, 0, 0]} name={title} />
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  };
 
   return (
     <>
@@ -457,10 +476,15 @@ const ControlsBar = ({
 
 // ── Main component ────────────────────────────────────────
 export interface ValuationCharts {
-  peHistorical:   SeriesPoint[];
-  pfcfHistorical: SeriesPoint[];
-  psHistorical:   SeriesPoint[];
-  pbHistorical:   SeriesPoint[];
+  peHistorical:    SeriesPoint[];
+  pfcfHistorical:  SeriesPoint[];
+  psHistorical:    SeriesPoint[];
+  pbHistorical:    SeriesPoint[];
+  // Quarterly TTM (more data points, preferred for line charts)
+  peQuarterly?:    SeriesPoint[];
+  psQuarterly?:    SeriesPoint[];
+  pbQuarterly?:    SeriesPoint[];
+  pfcfQuarterly?:  SeriesPoint[];
 }
 
 export function FinancialDashboardSection({
@@ -735,33 +759,37 @@ export function FinancialDashboardSection({
         <section>
           <SectionHeader
             title="Valuation Ratios History"
-            subtitle="Historical price multiples based on annual average stock price (annual data only)"
+            subtitle="מכפילים רבעוניים TTM (או שנתיים אם אין נתוני רבעון)"
             badge={<AiScoreBadge score={scores.valuation} />}
           />
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <SimpleChart
-              title="P/E History"
-              data={noTTM(valuationCharts.peHistorical)}
+              title="P/E (TTM)"
+              data={noTTM(valuationCharts.peQuarterly?.length ? valuationCharts.peQuarterly : valuationCharts.peHistorical)}
               color={C.blue}
               formatter={(v) => `${v.toFixed(1)}x`}
+              type="line"
             />
             <SimpleChart
-              title="P/FCF History"
-              data={noTTM(valuationCharts.pfcfHistorical)}
+              title="P/FCF (TTM)"
+              data={noTTM(valuationCharts.pfcfQuarterly?.length ? valuationCharts.pfcfQuarterly : valuationCharts.pfcfHistorical)}
               color={C.green}
               formatter={(v) => `${v.toFixed(1)}x`}
+              type="line"
             />
             <SimpleChart
-              title="P/S History"
-              data={noTTM(valuationCharts.psHistorical)}
+              title="P/S (TTM)"
+              data={noTTM(valuationCharts.psQuarterly?.length ? valuationCharts.psQuarterly : valuationCharts.psHistorical)}
               color={C.purple}
               formatter={(v) => `${v.toFixed(1)}x`}
+              type="line"
             />
             <SimpleChart
-              title="P/B History"
-              data={noTTM(valuationCharts.pbHistorical)}
+              title="P/B"
+              data={noTTM(valuationCharts.pbQuarterly?.length ? valuationCharts.pbQuarterly : valuationCharts.pbHistorical)}
               color={C.teal}
               formatter={(v) => `${v.toFixed(1)}x`}
+              type="line"
             />
           </div>
         </section>

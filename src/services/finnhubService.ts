@@ -162,6 +162,10 @@ export interface FinnhubHistoricalData {
     roe: SeriesPoint[];
     currentRatio: SeriesPoint[];
     debtToEquity: SeriesPoint[];
+    peQuarterly:   SeriesPoint[];   // quarterly TTM P/E
+    psQuarterly:   SeriesPoint[];   // quarterly TTM P/S
+    pbQuarterly:   SeriesPoint[];   // quarterly P/B
+    pfcfQuarterly: SeriesPoint[];   // quarterly TTM P/FCF
   };
   balance: {
     totalAssets: SeriesPoint[];
@@ -198,6 +202,55 @@ function groupByYear(timestamps: number[], closes: (number | null)[]): SeriesPoi
       date: String(year),
       value: +(cs.reduce((s, v) => s + v, 0) / cs.length).toFixed(2),
     }));
+}
+
+/** Group weekly timestamps into quarters, taking the LAST close of each quarter */
+function groupByQuarter(timestamps: number[], closes: (number | null)[]): SeriesPoint[] {
+  const byQ = new Map<string, { ts: number; val: number }>();
+  for (let i = 0; i < timestamps.length; i++) {
+    const c = closes[i];
+    if (c == null || !isFinite(c) || c <= 0) continue;
+    const d = new Date(timestamps[i] * 1000);
+    const year = d.getFullYear();
+    const q    = Math.floor(d.getMonth() / 3) + 1;
+    const key  = `${year} Q${q}`;
+    const ex   = byQ.get(key);
+    if (!ex || timestamps[i] > ex.ts) byQ.set(key, { ts: timestamps[i], val: c });
+  }
+  return Array.from(byQ.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, { val }]) => ({ date, value: +val.toFixed(2) }));
+}
+
+/** Fetch end-of-quarter closing prices (from Stooq weekly data) */
+async function fetchQuarterlyPrices(ticker: string, years = 12): Promise<SeriesPoint[]> {
+  const t  = ticker.trim().toUpperCase();
+  const ck = `qtr_prices_v1_${t}_${years}`;
+  const cached = cacheGet(ck);
+  if (cached && (cached as SeriesPoint[]).length > 0) return cached as SeriesPoint[];
+  try {
+    const stooqUrl = `https://stooq.com/q/d/l/?s=${t.toLowerCase()}.us&i=w`;
+    const res = await fetch(stooqUrl, { signal: AbortSignal.timeout(10_000) });
+    if (res.ok) {
+      const text = await res.text();
+      if (text.includes(",") && !text.toLowerCase().includes("no data")) {
+        const lines = text.trim().split("\n").slice(1);
+        const ts: number[] = [], cs: number[] = [];
+        for (const line of lines) {
+          const parts = line.split(",");
+          const d     = parts[0]?.trim();
+          const close = parseFloat(parts[4]?.trim() ?? "");
+          if (d && isFinite(close) && close > 0) {
+            ts.push(new Date(d).getTime() / 1000);
+            cs.push(close);
+          }
+        }
+        const prices = groupByQuarter(ts, cs);
+        if (prices.length > 4) { cacheSet(ck, prices); return prices; }
+      }
+    }
+  } catch { /* non-fatal */ }
+  return [];
 }
 
 /** Fetch annual average closing prices — tries multiple sources */
@@ -489,6 +542,59 @@ export async function fetchFinnhubHistorical(
     }
   } catch { /* non-fatal */ }
 
+  // ── Quarterly TTM valuation ratios (for richer line charts) ─
+  let peQuarterly:   SeriesPoint[] = [];
+  let psQuarterly:   SeriesPoint[] = [];
+  let pbQuarterly:   SeriesPoint[] = [];
+  let pfcfQuarterly: SeriesPoint[] = [];
+  try {
+    const allQReports: any[] = ((period === "annual" ? quarterlyRaw : finRaw)?.data ?? [])
+      .filter((r: any) => r.quarter !== 0)
+      .sort((a: any, b: any) => a.year !== b.year ? a.year - b.year : a.quarter - b.quarter);
+
+    if (allQReports.length >= 4) {
+      const qPrices   = await fetchQuarterlyPrices(t, 12);
+      const qPriceMap = new Map(qPrices.map((p) => [p.date, p.value]));
+
+      for (let i = 3; i < allQReports.length; i++) {
+        const r4   = allQReports.slice(i - 3, i + 1);
+        const qd   = `${allQReports[i].year} Q${allQReports[i].quarter}`;
+        const price = qPriceMap.get(qd);
+        if (!price) continue;
+
+        const sumIC = (...keys: string[]) =>
+          r4.reduce((s: number, r: any) => s + (findConcept(r.report?.ic ?? [], ...keys) ?? 0), 0);
+        const sumCF = (...keys: string[]) =>
+          r4.reduce((s: number, r: any) => s + (findConcept(r.report?.cf ?? [], ...keys) ?? 0), 0);
+
+        const epsSum  = sumIC("EarningsPerShareBasic", "EarningsPerShareDiluted");
+        const revSum  = sumIC("RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet", "RevenueNet");
+        const sharesQ = findConcept(allQReports[i].report?.ic ?? [], "WeightedAverageNumberOfDilutedSharesOutstanding", "WeightedAverageNumberOfSharesOutstandingBasic");
+        const equityQ = findConcept(allQReports[i].report?.bs ?? [], "StockholdersEquity", "StockholdersEquityAttributableToParent");
+        const ocfSum  = sumCF("NetCashProvidedByUsedInOperatingActivities");
+        const capSum  = sumCF("PaymentsToAcquirePropertyPlantAndEquipment", "CapitalExpenditures");
+        const fcfSum  = ocfSum - Math.abs(capSum);
+
+        if (epsSum !== 0) {
+          const pe = +(price / epsSum).toFixed(1);
+          if (pe > 0 && pe < 1000) peQuarterly.push({ date: qd, value: pe });
+        }
+        if (revSum > 0 && sharesQ) {
+          const ps = +(price * sharesQ / revSum).toFixed(1);
+          if (ps > 0 && ps < 200) psQuarterly.push({ date: qd, value: ps });
+        }
+        if (equityQ && equityQ > 0 && sharesQ) {
+          const pb = +(price * sharesQ / equityQ).toFixed(1);
+          if (pb > 0 && pb < 200) pbQuarterly.push({ date: qd, value: pb });
+        }
+        if (fcfSum > 0 && sharesQ) {
+          const pfcf = +(price * sharesQ / fcfSum).toFixed(1);
+          if (pfcf > 0 && pfcf < 500) pfcfQuarterly.push({ date: qd, value: pfcf });
+        }
+      }
+    }
+  } catch { /* non-fatal */ }
+
   // ── TTM from last 4 quarters ──────────────────────────────
   const qSource = period === "annual" ? quarterlyRaw : finRaw;
   const qReports: any[] = (qSource?.data ?? [])
@@ -554,6 +660,10 @@ export async function fetchFinnhubHistorical(
       roe,
       currentRatio,
       debtToEquity,
+      peQuarterly,
+      psQuarterly,
+      pbQuarterly,
+      pfcfQuarterly,
     },
     balance:  { totalAssets, totalLiabilities, totalEquity, totalDebt, cashAndShortTerm, totalCurrentAssets, totalCurrentLiabilities },
     cashflow: { operatingCashFlow: ocfFinal, freeCashFlow: fcfFinal, capitalExpenditures: capexFinal, stockBasedCompensation: sbcFinal, netIncome: cfNIFinal },
