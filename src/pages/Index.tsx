@@ -29,7 +29,7 @@ import { fetchMacrotrends, type MacrotrendsHistorical } from "@/services/macrotr
 import type { ValuationCharts } from "@/components/FinancialDashboardSection";
 import { FinancialDashboardSection } from "@/components/FinancialDashboardSection";
 import TradingViewWidget from "@/components/TradingViewWidget";
-import { StockScreener } from "@/components/StockScreener";
+import { GrokForecast } from "@/components/GrokForecast";
 import { KeyMetrics } from "@/components/KeyMetrics";
 import { CAPMSection } from "@/components/CAPMSection";
 import { StockAnalysis } from "@/components/StockAnalysis";
@@ -722,10 +722,15 @@ const Index = () => {
                 </AccordionItem>
               </Accordion>
 
-              {/* Stock Screener */}
-              <div className="mt-4">
-                <StockScreener />
-              </div>
+              {/* Grok AI Financial Forecast */}
+              {historicalData && "ratios" in historicalData && ticker && (
+                <div className="mt-4">
+                  <GrokForecast
+                    ticker={ticker.trim().toUpperCase()}
+                    historicalData={historicalData as FinnhubHistoricalData}
+                  />
+                </div>
+              )}
 
               {/* CAPM Discount Rate */}
               {loadedStockData && ticker && (
