@@ -28,23 +28,34 @@ async function fetchFGI(bust = false): Promise<FGIData | null> {
     } catch {}
   }
 
-  const url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata";
-  const proxies = [
-    url,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-    `https://corsproxy.io/?${encodeURIComponent(url)}`,
-  ];
+  // ── 1. Vercel serverless proxy (most reliable — no CORS) ──
+  try {
+    const res = await fetch("/api/feargreed", { signal: AbortSignal.timeout(10_000) });
+    if (res.ok) {
+      const json = await res.json();
+      if (typeof json.score === "number") {
+        const data: FGIData = { score: json.score, rating: json.rating, timestamp: json.timestamp };
+        try { localStorage.setItem(CACHE_KEY, JSON.stringify({ ts: Date.now(), data })); } catch {}
+        return data;
+      }
+    }
+  } catch {}
 
-  for (const src of proxies) {
+  // ── 2. Direct CNN + public proxies (fallback) ─────────────
+  const cnnUrl = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata";
+  for (const src of [
+    cnnUrl,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(cnnUrl)}`,
+    `https://corsproxy.io/?${encodeURIComponent(cnnUrl)}`,
+  ]) {
     try {
-      const res = await fetch(src, { signal: AbortSignal.timeout(10000) });
+      const res = await fetch(src, { signal: AbortSignal.timeout(10_000) });
       if (!res.ok) continue;
       const text = await res.text();
       if (!text.trimStart().startsWith("{")) continue;
       const json = JSON.parse(text);
       const fg   = json?.fear_and_greed;
       if (fg == null) continue;
-
       const data: FGIData = {
         score:     +(Number(fg.score)).toFixed(1),
         rating:    fg.rating ?? "",
@@ -54,6 +65,7 @@ async function fetchFGI(bust = false): Promise<FGIData | null> {
       return data;
     } catch {}
   }
+
   return null;
 }
 
