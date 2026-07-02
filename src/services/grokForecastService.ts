@@ -13,6 +13,7 @@ export interface ForecastRow {
   revenueGrowth: number;   // YoY %
   eps:           number;   // USD diluted
   epsGrowth:     number;   // YoY %
+  netMargin:     number;   // net profit margin %
   confidence:    "HIGH" | "MEDIUM" | "LOW";
 }
 
@@ -23,6 +24,12 @@ export interface ForecastResult {
     revenue5y: { value: number; confidence: string };
     eps3y:     { value: number; confidence: string };
     eps5y:     { value: number; confidence: string };
+  };
+  marginOutlook: {
+    current:      number;         // last actual net margin %
+    year3:        number;         // estimated net margin in 3 years (if thesis plays out)
+    year5:        number;         // estimated net margin in 5 years (if thesis plays out)
+    thesisDriver: string;         // Hebrew: what drives margin change
   };
   oneTimeItems: {
     hasItems:       boolean;
@@ -165,7 +172,7 @@ Company: ${companyName ?? ticker} (ticker: ${ticker})
 ${historicalSummary}
 
 === TASK: FINANCIAL FORECAST ===
-Build a table with the last actual year + 5 forward years.
+Build a table with the last actual year + 5 forward years, then provide margin outlook.
 
 Return ONLY this JSON (no extra text):
 {
@@ -177,6 +184,7 @@ Return ONLY this JSON (no extra text):
       "revenueGrowth": <number, YoY %>,
       "eps": <number, USD diluted>,
       "epsGrowth": <number, YoY %>,
+      "netMargin": <number, net profit margin as %, e.g. 21.5>,
       "confidence": "HIGH" | "MEDIUM" | "LOW"
     }
   ],
@@ -185,6 +193,12 @@ Return ONLY this JSON (no extra text):
     "revenue5y": { "value": <number, %>, "confidence": "HIGH"|"MEDIUM"|"LOW" },
     "eps3y":     { "value": <number, %>, "confidence": "HIGH"|"MEDIUM"|"LOW" },
     "eps5y":     { "value": <number, %>, "confidence": "HIGH"|"MEDIUM"|"LOW" }
+  },
+  "marginOutlook": {
+    "current":      <number, last actual net margin %>,
+    "year3":        <number, estimated net margin in 3 years IF the investment thesis plays out %>,
+    "year5":        <number, estimated net margin in 5 years IF the investment thesis plays out %>,
+    "thesisDriver": "<1-2 sentences in Hebrew: what drives the margin expansion or contraction — scale, mix shift, pricing power, cost structure, competition>"
   },
   "oneTimeItems": {
     "hasItems": <boolean>,
@@ -202,9 +216,12 @@ Rules:
    - MEDIUM = thin coverage or wide spread (>20% range)
 3. ${baseYear + 3}–${baseYear + 5}: your model estimate (type "estimate", confidence LOW)
    - Ground in historical CAGR + sector dynamics + operating leverage
-4. If any EPS year is distorted by non-recurring items → hasItems=true, describe in Hebrew, provide clean CAGR
-5. CAGR is calculated from base year (${baseYear}) to the target year
-6. analystNote must be in Hebrew
+4. netMargin for each year = estimated net income / revenue — must be consistent with EPS and revenue
+5. marginOutlook.year3 and year5 = the net margin scenario assuming the bull thesis materialises
+   (e.g. operating leverage, pricing power, new segment, cost cuts — whatever the thesis is)
+6. If any EPS year is distorted by non-recurring items → hasItems=true, describe in Hebrew, provide clean CAGR
+7. CAGR is from base year (${baseYear}) to target year
+8. All Hebrew fields must be written in Hebrew
 `.trim();
 
   const content = await callGroq(userPrompt);

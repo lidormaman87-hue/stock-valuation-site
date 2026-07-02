@@ -57,39 +57,48 @@ function ConfBadge({ confidence }: { confidence: string }) {
 function ForecastTable({ rows }: { rows: ForecastRow[] }) {
   return (
     <div className="overflow-x-auto rounded-xl border border-border">
-      <table className="w-full text-sm min-w-[640px]" dir="rtl">
+      <table className="w-full text-sm min-w-[740px]" dir="rtl">
         <thead>
           <tr className="bg-secondary/60 text-muted-foreground text-[11px] uppercase tracking-wide">
-            {["שנה","סוג","הכנסות","צמיחה","EPS","צמיחת EPS","ביטחון"].map((h) => (
-              <th key={h} className="px-4 py-2.5 text-right font-semibold whitespace-nowrap">{h}</th>
+            {["שנה","סוג","הכנסות","צמיחה","EPS","צמיחת EPS","שולי רווח","ביטחון"].map((h) => (
+              <th key={h} className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => {
             const isActual = row.type === "actual";
-            const revPos  = row.revenueGrowth >= 0;
-            const epsPos  = row.epsGrowth >= 0;
+            const revPos   = row.revenueGrowth >= 0;
+            const epsPos   = row.epsGrowth >= 0;
+            const margin   = row.netMargin ?? null;
             return (
               <tr key={row.year}
                 className={`border-t border-border/40 transition-colors hover:bg-secondary/30 ${isActual ? "bg-secondary/30 font-medium" : ""}`}>
-                <td className="px-4 py-2.5 font-bold tabular-nums">{row.year}</td>
-                <td className="px-4 py-2.5"><TypeBadge type={row.type} /></td>
-                <td className="px-4 py-2.5 font-mono tabular-nums">{fmtRev(row.revenue)}</td>
-                <td className="px-4 py-2.5">
+                <td className="px-3 py-2.5 font-bold tabular-nums">{row.year}</td>
+                <td className="px-3 py-2.5"><TypeBadge type={row.type} /></td>
+                <td className="px-3 py-2.5 font-mono tabular-nums">{fmtRev(row.revenue)}</td>
+                <td className="px-3 py-2.5">
                   <span className="font-mono font-semibold tabular-nums"
                     style={{ color: revPos ? "#16a34a" : "#dc2626" }}>
                     {fmtPct(row.revenueGrowth)}
                   </span>
                 </td>
-                <td className="px-4 py-2.5 font-mono tabular-nums">${row.eps.toFixed(2)}</td>
-                <td className="px-4 py-2.5">
+                <td className="px-3 py-2.5 font-mono tabular-nums">${row.eps.toFixed(2)}</td>
+                <td className="px-3 py-2.5">
                   <span className="font-mono font-semibold tabular-nums"
                     style={{ color: epsPos ? "#16a34a" : "#dc2626" }}>
                     {fmtPct(row.epsGrowth)}
                   </span>
                 </td>
-                <td className="px-4 py-2.5"><ConfBadge confidence={row.confidence} /></td>
+                <td className="px-3 py-2.5">
+                  {margin != null ? (
+                    <span className="font-mono tabular-nums text-xs"
+                      style={{ color: margin >= 15 ? "#16a34a" : margin >= 8 ? "#d97706" : "#dc2626" }}>
+                      {margin.toFixed(1)}%
+                    </span>
+                  ) : <span className="text-muted-foreground">—</span>}
+                </td>
+                <td className="px-3 py-2.5"><ConfBadge confidence={row.confidence} /></td>
               </tr>
             );
           })}
@@ -123,6 +132,61 @@ function CAGRGrid({ cagr }: { cagr: ForecastResult["cagr"] }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function MarginOutlookCard({ margin }: { margin: ForecastResult["marginOutlook"] }) {
+  const delta3 = margin.year3 - margin.current;
+  const delta5 = margin.year5 - margin.current;
+  const sign   = (v: number) => (v >= 0 ? "+" : "") + v.toFixed(1) + "pp";
+  const col    = (v: number) => v >= 0 ? "#16a34a" : "#dc2626";
+
+  return (
+    <div className="rounded-xl border border-violet-300/40 bg-violet-500/5 p-4 space-y-3" dir="rtl">
+      <div className="flex items-center gap-2">
+        <span className="text-base">📐</span>
+        <h3 className="text-sm font-bold">שולי רווח נקי — תחזית אם התזה תתממש</h3>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        {/* Current */}
+        <div className="card-elegant p-3 text-center space-y-1">
+          <p className="text-[10px] text-muted-foreground">היום (בפועל)</p>
+          <p className="text-xl font-black text-foreground tabular-nums">
+            {margin.current.toFixed(1)}%
+          </p>
+          <p className="text-[10px] text-muted-foreground">בסיס</p>
+        </div>
+
+        {/* 3Y */}
+        <div className="card-elegant p-3 text-center space-y-1">
+          <p className="text-[10px] text-muted-foreground">3 שנים קדימה</p>
+          <p className="text-xl font-black tabular-nums" style={{ color: col(delta3) }}>
+            {margin.year3.toFixed(1)}%
+          </p>
+          <p className="text-[10px] font-semibold tabular-nums" style={{ color: col(delta3) }}>
+            {sign(delta3)}
+          </p>
+        </div>
+
+        {/* 5Y */}
+        <div className="card-elegant p-3 text-center space-y-1">
+          <p className="text-[10px] text-muted-foreground">5 שנים קדימה</p>
+          <p className="text-xl font-black tabular-nums" style={{ color: col(delta5) }}>
+            {margin.year5.toFixed(1)}%
+          </p>
+          <p className="text-[10px] font-semibold tabular-nums" style={{ color: col(delta5) }}>
+            {sign(delta5)}
+          </p>
+        </div>
+      </div>
+
+      {margin.thesisDriver && (
+        <p className="text-xs text-foreground/70 leading-relaxed border-t border-border/30 pt-2">
+          💡 {margin.thesisDriver}
+        </p>
+      )}
     </div>
   );
 }
@@ -289,6 +353,11 @@ export function GrokForecast({
             </h3>
             <CAGRGrid cagr={result.cagr} />
           </div>
+
+          {/* Margin outlook */}
+          {result.marginOutlook && (
+            <MarginOutlookCard margin={result.marginOutlook} />
+          )}
 
           {/* One-time items */}
           {result.oneTimeItems?.hasItems && (
