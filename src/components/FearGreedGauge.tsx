@@ -231,7 +231,7 @@ export function FearGreedGauge({ ticker }: { ticker?: string }) {
           <div className="flex-shrink-0 w-16 h-16 rounded-full border-4 flex items-center justify-center"
             style={{ borderColor: color, background: `${color}18` }}>
             <span className="text-xl font-black" style={{ color }}>
-              {data.score.toFixed(0)}
+              {Math.floor(data.score)}
             </span>
           </div>
           {/* Label */}
