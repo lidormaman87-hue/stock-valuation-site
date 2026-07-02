@@ -34,6 +34,7 @@ import { KeyMetrics } from "@/components/KeyMetrics";
 import { CAPMSection } from "@/components/CAPMSection";
 import { StockAnalysis } from "@/components/StockAnalysis";
 import { FearGreedGauge } from "@/components/FearGreedGauge";
+import { SectorBrowser } from "@/components/SectorBrowser";
 
 // Initialize API keys on first load
 if (!getApiKey())     setApiKey("LPL9LH322EVZ8F3W");
@@ -187,6 +188,54 @@ const Index = () => {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(savedStocks));
     } catch { /* ignore */ }
   }, [savedStocks]);
+
+  // Called by SectorBrowser when user clicks a stock — full load like handleLoadTicker
+  const handleSelectFromSector = async (sym: string) => {
+    const t = sym.trim().toUpperCase();
+    if (!t) return;
+    setTicker(t);
+    setLoadingTicker(true);
+    setMacrotrendsData(null);
+    const loadingId = toast.loading(`טוען נתונים עבור ${t}...`);
+    try {
+      const data = await fetchStockData(t);
+      setLoadedStockData(data);
+      setInputs((prev) => ({
+        ...prev,
+        stockName: data.companyName ?? t,
+        currentSharePrice: data.currentPrice   ?? prev.currentSharePrice,
+        marketSharePrice:  data.currentPrice   ?? prev.marketSharePrice,
+        currentMarketCap:  data.marketCap      ?? prev.currentMarketCap,
+        baseRevenue:       data.baseRevenue    ?? prev.baseRevenue,
+        netMargin:         data.netMargin      ?? prev.netMargin,
+        baseEPS:           data.baseEPS        ?? prev.baseEPS,
+        revenueGrowth:     data.revenueGrowth  ?? prev.revenueGrowth,
+        epsGrowthRate:     data.epsGrowth      ?? prev.epsGrowthRate,
+      }));
+      toast.dismiss(loadingId);
+      toast.success(`נתונים נטענו בהצלחה עבור ${data.companyName ?? t}`);
+      setLoadingHistorical(true);
+      (async () => {
+        fetchMacrotrends(t, data.companyName ?? t)
+          .then((mt) => { if (mt.pe.length > 0 || mt.ps.length > 0) setMacrotrendsData(mt); })
+          .catch(() => {});
+        if (getFinnhubKey()) {
+          try {
+            const fh = await fetchFinnhubHistorical(t);
+            if (fh.income.revenues.some((p) => p.value !== null)) { setHistoricalData(fh); return; }
+          } catch { /* fallthrough */ }
+        }
+        if (getApiKey()) {
+          try { setHistoricalData(await fetchHistoricalData(t)); } catch { /* silent */ }
+        }
+      })().finally(() => setLoadingHistorical(false));
+    } catch {
+      toast.dismiss(loadingId);
+      toast.error(`שגיאה בטעינת ${t}`);
+    } finally {
+      setLoadingTicker(false);
+    }
+  };
 
   const handleLoadTicker = async () => {
     const t = ticker.trim().toUpperCase();
@@ -450,6 +499,9 @@ const Index = () => {
               </p>
             </AlertDescription>
           </Alert>
+
+          {/* Sector Browser */}
+          <SectorBrowser onSelectTicker={handleSelectFromSector} />
 
           {/* Auto-load by ticker */}
           <Card className="card-elegant">
