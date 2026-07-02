@@ -8,7 +8,7 @@
  *   metric  — pe-ratio | price-sales | price-book | price-fcf
  */
 
-export const config = { runtime: "nodejs20.x" };
+export const config = { runtime: "nodejs" };
 
 /* ── HTML table parser ──────────────────────────────────── */
 function parseTable(html: string): { date: string; value: number }[] {

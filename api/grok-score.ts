@@ -8,7 +8,7 @@
  * Requires env var: GROK_API_KEY
  */
 
-export const config = { runtime: "nodejs20.x" };
+export const config = { runtime: "nodejs" };
 
 const SECTION_LABELS: Record<string, string> = {
   income:    "Income Statement",
