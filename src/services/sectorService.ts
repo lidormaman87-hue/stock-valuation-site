@@ -1,108 +1,110 @@
 /**
- * sectorService — fetches daily & weekly % change for sector ETFs and
- * individual stocks via Stooq (free, no CORS, no API key needed).
+ * sectorService — daily & weekly % for sector ETFs and sector stocks.
  *
- * Stooq daily CSV: https://stooq.com/q/d/l/?s=xlk.us&i=d&d1=YYYYMMDD&d2=YYYYMMDD
- * Columns: Date, Open, High, Low, Close, Volume
+ * Daily %  → Finnhub /quote (dp field) — real-time, exact
+ * Weekly % → Stooq weekly CSV (i=w), last 5 bars — free, no CORS
  */
+import { getFinnhubKey } from "@/services/finnhubService";
 
 export interface QuotePerf {
   ticker:  string;
-  close:   number;    // latest close
-  dayPct:  number;    // % vs previous close
-  weekPct: number;    // % vs close ~5 trading days ago
+  close:   number;
+  dayPct:  number;   // daily % change
+  weekPct: number;   // ~5-week % change (last Stooq weekly bar vs 5 bars back)
 }
 
-// Cache: 15 minutes
+/* ── In-memory cache (15 min) ─────────────────────────── */
 const CACHE_TTL = 15 * 60 * 1000;
-const cache = new Map<string, { ts: number; data: QuotePerf }>();
+interface CacheEntry { ts: number; data: QuotePerf }
+const perfCache = new Map<string, CacheEntry>();
 
-function cacheKey(ticker: string) {
-  return `sector_${ticker.toLowerCase()}`;
+function fromCache(ticker: string): QuotePerf | null {
+  const hit = perfCache.get(ticker.toUpperCase());
+  if (hit && Date.now() - hit.ts < CACHE_TTL) return hit.data;
+  return null;
+}
+function toCache(perf: QuotePerf) {
+  perfCache.set(perf.ticker.toUpperCase(), { ts: Date.now(), data: perf });
 }
 
-/** Format date as YYYYMMDD for Stooq */
-function toStooqDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}${m}${day}`;
-}
-
-/** Fetch last N calendar days of daily closes from Stooq */
-async function fetchStooqDaily(ticker: string, calendarDays = 20): Promise<{ date: string; close: number }[]> {
-  const ck = cacheKey(ticker);
-  const hit = cache.get(ck);
-  if (hit && Date.now() - hit.ts < CACHE_TTL) return []; // already fresh — caller uses cache
-
-  const today   = new Date();
-  const fromDate = new Date(today);
-  fromDate.setDate(today.getDate() - calendarDays);
-
-  // Stooq uses {ticker}.us for US equities/ETFs
-  const sym = ticker.toLowerCase().replace("-", "-") + ".us";
-  const url  = `https://stooq.com/q/d/l/?s=${sym}&i=d&d1=${toStooqDate(fromDate)}&d2=${toStooqDate(today)}`;
-
+/* ── Finnhub quote (daily %) ──────────────────────────── */
+async function fetchFinnhubQuote(
+  ticker: string
+): Promise<{ close: number; dayPct: number } | null> {
+  const key = getFinnhubKey();
+  if (!key) return null;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-    if (!res.ok) return [];
-    const text = await res.text();
-    if (!text.includes(",") || text.toLowerCase().includes("no data")) return [];
-
-    // Parse CSV (skip header line)
-    const rows = text.trim().split("\n").slice(1);
-    const result: { date: string; close: number }[] = [];
-    for (const row of rows) {
-      const cols  = row.split(",");
-      const date  = cols[0]?.trim();
-      const close = parseFloat(cols[4]?.trim() ?? "");
-      if (date && isFinite(close) && close > 0) {
-        result.push({ date, close });
-      }
-    }
-    // Sort ascending (oldest first)
-    result.sort((a, b) => a.date.localeCompare(b.date));
-    return result;
+    const url = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(ticker)}&token=${key}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+    if (!res.ok) return null;
+    const j = await res.json();
+    // c = current, dp = % change, d = absolute change
+    if (typeof j.c !== "number" || j.c === 0) return null;
+    return { close: j.c, dayPct: +(j.dp ?? 0).toFixed(2) };
   } catch {
-    return [];
+    return null;
   }
 }
 
-/** Compute QuotePerf from a sorted array of daily prices */
-function toPerf(ticker: string, rows: { date: string; close: number }[]): QuotePerf | null {
-  if (rows.length < 2) return null;
+/* ── Stooq weekly CSV (weekly %) ─────────────────────── */
+async function fetchStooqWeekly(ticker: string): Promise<number | null> {
+  try {
+    const sym = ticker.toLowerCase().replace(/-/g, "-") + ".us";
+    const url = `https://stooq.com/q/d/l/?s=${sym}&i=w`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) return null;
+    const text = await res.text();
+    if (!text.includes(",") || text.toLowerCase().includes("no data")) return null;
 
-  const latest  = rows[rows.length - 1].close;
-  const prevDay = rows[rows.length - 2].close;
+    // CSV: Date,Open,High,Low,Close,Volume — skip header, take last 6 rows
+    const rows = text.trim().split("\n").slice(1);
+    const closes: number[] = [];
+    for (const row of rows) {
+      const parts = row.split(",");
+      const c = parseFloat(parts[4]?.trim() ?? "");
+      if (isFinite(c) && c > 0) closes.push(c);
+    }
+    if (closes.length < 2) return null;
 
-  // Weekly = ~5 trading days ago; clamp to first available
-  const weekIdx  = Math.max(0, rows.length - 6);
-  const weekAgo  = rows[weekIdx].close;
-
-  return {
-    ticker,
-    close:   latest,
-    dayPct:  +((latest - prevDay) / prevDay * 100).toFixed(2),
-    weekPct: +((latest - weekAgo)  / weekAgo  * 100).toFixed(2),
-  };
+    // Weekly % = last bar vs 5 bars back (≈ 5 weeks), clamp to available
+    const last    = closes[closes.length - 1];
+    const weekIdx = Math.max(0, closes.length - 6);
+    const prev    = closes[weekIdx];
+    return prev > 0 ? +((last - prev) / prev * 100).toFixed(2) : null;
+  } catch {
+    return null;
+  }
 }
 
-/** Fetch perf for a single ticker (with internal cache) */
+/* ── Main: fetch single ticker perf ──────────────────── */
 export async function fetchPerf(ticker: string): Promise<QuotePerf | null> {
-  // Check memory cache
-  const ck  = cacheKey(ticker);
-  const hit = cache.get(ck);
-  if (hit && Date.now() - hit.ts < CACHE_TTL) return hit.data;
+  const t = ticker.trim().toUpperCase();
+  const cached = fromCache(t);
+  if (cached) return cached;
 
-  const rows = await fetchStooqDaily(ticker, 20);
-  const perf = toPerf(ticker, rows);
-  if (perf) cache.set(ck, { ts: Date.now(), data: perf });
+  // Fetch daily (Finnhub) and weekly (Stooq) in parallel
+  const [quote, weekPct] = await Promise.all([
+    fetchFinnhubQuote(t),
+    fetchStooqWeekly(t),
+  ]);
+
+  if (!quote) return null;
+
+  const perf: QuotePerf = {
+    ticker:  t,
+    close:   quote.close,
+    dayPct:  quote.dayPct,
+    weekPct: weekPct ?? 0,
+  };
+  toCache(perf);
   return perf;
 }
 
-/** Fetch all ETF perfs in parallel */
+/* ── Fetch all ETF perfs in parallel ─────────────────── */
 export async function fetchAllEtfPerfs(etfs: string[]): Promise<Map<string, QuotePerf>> {
-  const results = await Promise.all(etfs.map((etf) => fetchPerf(etf).then((p) => [etf, p] as const)));
+  const results = await Promise.all(
+    etfs.map((etf) => fetchPerf(etf).then((p) => [etf, p] as const))
+  );
   const map = new Map<string, QuotePerf>();
   for (const [etf, perf] of results) {
     if (perf) map.set(etf, perf);
@@ -110,7 +112,7 @@ export async function fetchAllEtfPerfs(etfs: string[]): Promise<Map<string, Quot
   return map;
 }
 
-/** Fetch sector stock perfs, return sorted by |dayPct| desc */
+/* ── Sector top movers ───────────────────────────────── */
 export async function fetchSectorTopMovers(
   stocks: string[],
   sortBy: "day" | "week" = "day"
