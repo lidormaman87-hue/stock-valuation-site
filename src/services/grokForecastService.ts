@@ -26,7 +26,8 @@ export interface ForecastResult {
     eps5y:     { value: number; confidence: string };
   };
   marginOutlook: {
-    current:      number;         // last actual net margin %
+    current:      number;         // last fiscal year net margin %
+    currentTTM?:  number;         // TTM net margin % (if materially different from fiscal year)
     year3:        number;         // estimated net margin in 3 years (if thesis plays out)
     year5:        number;         // estimated net margin in 5 years (if thesis plays out)
     thesisDriver: string;         // Hebrew: what drives margin change
@@ -99,6 +100,21 @@ export function buildForecastSummary(data: FinnhubHistoricalData): string {
       if (r?.value && n.value != null)
         lines.push(`  ${n.date}: ${(n.value / r.value * 100).toFixed(1)}%`);
     }
+  }
+
+  // TTM (trailing 12 months) — may differ significantly from last fiscal year
+  const ttmRev = data.income.revenues.find((p) => p.date === "TTM")?.value ?? null;
+  const ttmNI  = data.income.netIncome.find((p) => p.date === "TTM")?.value ?? null;
+  const ttmEps = data.income.eps.find((p) => p.date === "TTM")?.value ?? null;
+  const ttmGP  = data.income.grossProfit.find((p) => p.date === "TTM")?.value ?? null;
+  const ttmOI  = data.income.operatingIncome.find((p) => p.date === "TTM")?.value ?? null;
+  if (ttmRev != null) {
+    const ttmGM  = ttmRev && ttmGP  != null ? `GrossMargin=${(ttmGP  / ttmRev * 100).toFixed(1)}%` : "";
+    const ttmOM  = ttmRev && ttmOI  != null ? `OpMargin=${(ttmOI  / ttmRev * 100).toFixed(1)}%`    : "";
+    const ttmNM  = ttmRev && ttmNI  != null ? `NetMargin=${(ttmNI  / ttmRev * 100).toFixed(1)}%`   : "";
+    lines.push(`\nTTM (trailing 12 months — IMPORTANT: use as the true current baseline):`);
+    lines.push(`  Revenue=${fmtM(ttmRev)} NetIncome=${fmtM(ttmNI)} EPS=$${ttmEps?.toFixed(2) ?? "N/A"} ${ttmGM} ${ttmOM} ${ttmNM}`);
+    lines.push(`  NOTE: If TTM net margin differs substantially from the last fiscal year, TTM is more representative of current profitability.`);
   }
 
   return lines.join("\n");
@@ -195,7 +211,8 @@ Return ONLY this JSON (no extra text):
     "eps5y":     { "value": <number, %>, "confidence": "HIGH"|"MEDIUM"|"LOW" }
   },
   "marginOutlook": {
-    "current":      <number, last actual net margin %>,
+    "current":      <number, last FISCAL YEAR net margin %>,
+    "currentTTM":   <number or null — TTM net margin % IF it differs from 'current' by more than 1.5pp, otherwise null>,
     "year3":        <number, estimated net margin in 3 years IF the investment thesis plays out %>,
     "year5":        <number, estimated net margin in 5 years IF the investment thesis plays out %>,
     "thesisDriver": "<1-2 sentences in Hebrew: what drives the margin expansion or contraction — scale, mix shift, pricing power, cost structure, competition>"
@@ -217,7 +234,10 @@ Rules:
 3. ${baseYear + 3}–${baseYear + 5}: your model estimate (type "estimate", confidence LOW)
    - Ground in historical CAGR + sector dynamics + operating leverage
 4. netMargin for each year = estimated net income / revenue — must be consistent with EPS and revenue
-5. marginOutlook.year3 and year5 = the net margin scenario assuming the bull thesis materialises
+5. marginOutlook.current = last fiscal year GAAP net margin
+   marginOutlook.currentTTM = TTM net margin IF it differs from current by >1.5pp (otherwise null)
+   If TTM margin is much higher than fiscal year, it likely means one-time charges hit the fiscal year — TTM is the cleaner baseline; use TTM when projecting year3/year5
+   marginOutlook.year3 and year5 = the net margin scenario assuming the bull thesis materialises
    (e.g. operating leverage, pricing power, new segment, cost cuts — whatever the thesis is)
 6. If any EPS year is distorted by non-recurring items → hasItems=true, describe in Hebrew, provide clean CAGR
 7. CAGR is from base year (${baseYear}) to target year

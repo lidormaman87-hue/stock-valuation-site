@@ -137,10 +137,13 @@ function CAGRGrid({ cagr }: { cagr: ForecastResult["cagr"] }) {
 }
 
 function MarginOutlookCard({ margin }: { margin: ForecastResult["marginOutlook"] }) {
-  const delta3 = margin.year3 - margin.current;
-  const delta5 = margin.year5 - margin.current;
+  // Use TTM as the reference base for delta calculations if available
+  const base   = margin.currentTTM ?? margin.current;
+  const delta3 = margin.year3 - base;
+  const delta5 = margin.year5 - base;
   const sign   = (v: number) => (v >= 0 ? "+" : "") + v.toFixed(1) + "pp";
   const col    = (v: number) => v >= 0 ? "#16a34a" : "#dc2626";
+  const hasTTM = margin.currentTTM != null && Math.abs(margin.currentTTM - margin.current) >= 1.5;
 
   return (
     <div className="rounded-xl border border-violet-300/40 bg-violet-500/5 p-4 space-y-3" dir="rtl">
@@ -149,15 +152,26 @@ function MarginOutlookCard({ margin }: { margin: ForecastResult["marginOutlook"]
         <h3 className="text-sm font-bold">שולי רווח נקי — תחזית אם התזה תתממש</h3>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        {/* Current */}
+      <div className={`grid gap-3 ${hasTTM ? "grid-cols-4" : "grid-cols-3"}`}>
+        {/* Fiscal year current */}
         <div className="card-elegant p-3 text-center space-y-1">
-          <p className="text-[10px] text-muted-foreground">היום (בפועל)</p>
+          <p className="text-[10px] text-muted-foreground">שנה פיסקלית</p>
           <p className="text-xl font-black text-foreground tabular-nums">
             {margin.current.toFixed(1)}%
           </p>
-          <p className="text-[10px] text-muted-foreground">בסיס</p>
+          <p className="text-[10px] text-muted-foreground">מדווח</p>
         </div>
+
+        {/* TTM — only shown when materially different */}
+        {hasTTM && (
+          <div className="card-elegant p-3 text-center space-y-1 ring-1 ring-violet-400/40">
+            <p className="text-[10px] text-muted-foreground">TTM (12 חודש)</p>
+            <p className="text-xl font-black tabular-nums text-violet-500">
+              {margin.currentTTM!.toFixed(1)}%
+            </p>
+            <p className="text-[10px] font-semibold text-violet-400">מתואם</p>
+          </div>
+        )}
 
         {/* 3Y */}
         <div className="card-elegant p-3 text-center space-y-1">
@@ -181,6 +195,12 @@ function MarginOutlookCard({ margin }: { margin: ForecastResult["marginOutlook"]
           </p>
         </div>
       </div>
+
+      {hasTTM && (
+        <p className="text-[10px] text-muted-foreground/70 border-t border-border/20 pt-2">
+          ⚡ TTM שונה מהשנה הפיסקלית — ייתכן שהיו פריטים חד-פעמיים. הדלתות מחושבות מה-TTM כבסיס.
+        </p>
+      )}
 
       {margin.thesisDriver && (
         <p className="text-xs text-foreground/70 leading-relaxed border-t border-border/30 pt-2">
