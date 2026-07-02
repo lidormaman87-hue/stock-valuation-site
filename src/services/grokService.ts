@@ -3,11 +3,6 @@
  * Calls /api/grok-score (Vercel function) and caches results 24h per ticker+section.
  */
 
-/* ── Grok API key (stored in localStorage, sent to Vercel proxy) ── */
-const GROK_KEY_LS = "grok_api_key_v1";
-export const setGrokKey = (k: string) => { try { localStorage.setItem(GROK_KEY_LS, k.trim()); } catch {} };
-export const getGrokKey = (): string | null => { try { return localStorage.getItem(GROK_KEY_LS) || null; } catch { return null; } };
-
 export type SectionKey = "income" | "balance" | "cashflow" | "valuation";
 
 export interface GrokScore {
@@ -51,7 +46,7 @@ export async function fetchGrokScore(
     const res = await fetch("/api/grok-score", {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ section, ticker, summary, apiKey: getGrokKey() }),
+      body:    JSON.stringify({ section, ticker, summary }),
       signal:  AbortSignal.timeout(30_000),
     });
 
