@@ -10,7 +10,6 @@ export interface QuotePerf {
   ticker:  string;
   close:   number;
   dayPct:  number;   // daily % change
-  weekPct: number;   // ~5-week % change (last Stooq weekly bar vs 5 bars back)
 }
 
 /* ── In-memory cache (15 min) ─────────────────────────── */
@@ -46,56 +45,16 @@ async function fetchFinnhubQuote(
   }
 }
 
-/* ── Stooq weekly CSV (weekly %) ─────────────────────── */
-async function fetchStooqWeekly(ticker: string): Promise<number | null> {
-  try {
-    const sym = ticker.toLowerCase().replace(/-/g, "-") + ".us";
-    const url = `https://stooq.com/q/d/l/?s=${sym}&i=w`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-    if (!res.ok) return null;
-    const text = await res.text();
-    if (!text.includes(",") || text.toLowerCase().includes("no data")) return null;
-
-    // CSV: Date,Open,High,Low,Close,Volume — skip header, take last 6 rows
-    const rows = text.trim().split("\n").slice(1);
-    const closes: number[] = [];
-    for (const row of rows) {
-      const parts = row.split(",");
-      const c = parseFloat(parts[4]?.trim() ?? "");
-      if (isFinite(c) && c > 0) closes.push(c);
-    }
-    if (closes.length < 2) return null;
-
-    // Weekly % = last bar vs 5 bars back (≈ 5 weeks), clamp to available
-    const last    = closes[closes.length - 1];
-    const weekIdx = Math.max(0, closes.length - 6);
-    const prev    = closes[weekIdx];
-    return prev > 0 ? +((last - prev) / prev * 100).toFixed(2) : null;
-  } catch {
-    return null;
-  }
-}
-
 /* ── Main: fetch single ticker perf ──────────────────── */
 export async function fetchPerf(ticker: string): Promise<QuotePerf | null> {
   const t = ticker.trim().toUpperCase();
   const cached = fromCache(t);
   if (cached) return cached;
 
-  // Fetch daily (Finnhub) and weekly (Stooq) in parallel
-  const [quote, weekPct] = await Promise.all([
-    fetchFinnhubQuote(t),
-    fetchStooqWeekly(t),
-  ]);
-
+  const quote = await fetchFinnhubQuote(t);
   if (!quote) return null;
 
-  const perf: QuotePerf = {
-    ticker:  t,
-    close:   quote.close,
-    dayPct:  quote.dayPct,
-    weekPct: weekPct ?? 0,
-  };
+  const perf: QuotePerf = { ticker: t, close: quote.close, dayPct: quote.dayPct };
   toCache(perf);
   return perf;
 }
@@ -113,16 +72,9 @@ export async function fetchAllEtfPerfs(etfs: string[]): Promise<Map<string, Quot
 }
 
 /* ── Sector top movers ───────────────────────────────── */
-export async function fetchSectorTopMovers(
-  stocks: string[],
-  sortBy: "day" | "week" = "day"
-): Promise<QuotePerf[]> {
+export async function fetchSectorTopMovers(stocks: string[]): Promise<QuotePerf[]> {
   const results = await Promise.all(stocks.map((s) => fetchPerf(s)));
   return results
     .filter((p): p is QuotePerf => p !== null)
-    .sort((a, b) =>
-      sortBy === "day"
-        ? Math.abs(b.dayPct)  - Math.abs(a.dayPct)
-        : Math.abs(b.weekPct) - Math.abs(a.weekPct)
-    );
+    .sort((a, b) => Math.abs(b.dayPct) - Math.abs(a.dayPct));
 }
